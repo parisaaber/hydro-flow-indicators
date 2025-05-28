@@ -111,4 +111,3 @@ MIT License
 
 Developed by [Parisa Aberi](https://github.com/parisaaber)
 
-```
