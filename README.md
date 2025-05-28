@@ -50,7 +50,7 @@ out_path = "/content/Hydrographs.parquet"
 # Process and analyze data
 df_long = reshape_to_long(load_raven_output(csv_path))
 save_to_parquet(df_long, out_path)
-indicators = calculate_indicators(out_path)
+indicators = calculate_indicators(out_path,break_point=1990)
 
 # Show result
 print(indicators)
