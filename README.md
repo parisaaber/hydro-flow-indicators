@@ -1,4 +1,4 @@
-````markdown
+#````markdown
 # HydroFlowIndicators
 
 This repository provides a streamlined workflow for computing hydrologic flow indicators from model-generated or observed streamflow time series (e.g., Raven hydrologic model output). It includes tools for reading, reshaping, converting to Parquet, and extracting key indicators such as peak flows, flow timing, and ecological flow thresholds.
