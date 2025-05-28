@@ -1,2 +1,2 @@
 # HydroFlowIndicators
-Hydrological Indicators and Flood Frequency Analysis
+This Python workflow provides tools for calculating key hydrological indicators and performing flood frequency analysis (FFA) on streamflow data. It processes daily flow data to compute annual peak flows, mean flows for specified periods, flow timing, and environmental flow thresholds. The package supports splitting data into subperiods based on user-defined breakpoints for comparative analysis, and fits extreme value distributions (e.g., Gumbel) to estimate return period flows such as 2-year and 20-year peaks.
