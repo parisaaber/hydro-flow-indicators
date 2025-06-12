@@ -1,10 +1,10 @@
 # 🌊 Raven Streamflow Indicators API
 
-This FastAPI-based application provides a web service for computing a suite of hydrological indicators from Raven hydrologic model output or any comparable streamflow time series in Parquet format. It supports environmental flow metrics, flood frequency analysis, and sub-period comparisons.
+This FastAPI-based application provides a web service for computing a suite of hydrological indicators from Raven hydrologic model output or any comparable streamflow time series in CSV format. It supports environmental flow metrics, flood frequency analysis, and sub-period comparisons.
 
 ## 📦 Features
 
-- Load and preprocess Raven output or streamflow datasets
+- Load and preprocess Raven output or streamflow datasets from local files or web URLs
 - Calculate hydrologic indicators:
   - Mean annual flow
   - Mean August–September flow
@@ -41,6 +41,7 @@ pandas
 numpy
 duckdb
 scipy
+requests
 ```
 
 ---
@@ -48,7 +49,7 @@ scipy
 ## 🚀 Running the API
 
 ```bash
-uvicorn app:app --reload
+uvicorn raven_api.app:app --reload
 ```
 
 Then open your browser to:
@@ -64,39 +65,56 @@ Basic welcome message.
 
 ---
 
-### `GET /indicators/`
+### `POST /indicators/`
 
-Compute flow indicators from a Parquet file.
+Upload a Raven CSV file and compute flow indicators.
+
+#### Form Data:
+
+* `file` *(file, required)*: Upload a Raven output CSV file.
+* `efn_threshold` *(float, optional, default=0.2)*: EFN threshold as a fraction of mean annual flow
+* `break_point` *(int, optional)*: Optional water year to split into subperiods
+
+#### Example curl:
+
+```bash
+curl -X 'POST' \
+  'http://127.0.0.1:8000/indicators/?efn_threshold=0.2&break_point=2005' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: multipart/form-data' \
+  -F 'file=@Hydrographs.csv;type=text/csv'
+```
+
+---
+
+### `GET /indicators-local/`
+
+Compute indicators from a local Raven CSV file path or web URL.
 
 #### Query Parameters:
 
-* `parquet_path` *(str, required)*: Path to the input Parquet file
+* `csv_path` *(str, required)*: Local file path or web URL to the Raven CSV file
 * `efn_threshold` *(float, optional, default=0.2)*: EFN threshold as a fraction of mean annual flow
 * `break_point` *(int, optional)*: Optional water year to split into subperiods
 
 #### Example:
 
 ```
-/indicators/?parquet_path=data/flow_data.parquet&efn_threshold=0.2&break_point=2005
+http://127.0.0.1:8000/indicators-local/?csv_path=https://github.com/parisaaber/HydroFlowIndicators/raw/refs/heads/main/Hydrographs.csv&efn_threshold=0.2&break_point=2005
 ```
-
-#### Response:
-
-A list of dictionaries, each containing flow indicators for a site and sub-period.
 
 ---
 
 ## 📂 Project Structure
 
 ```text
-raven-streamflow-api/
-├── app.py                  # FastAPI entry point
+HydroFlowIndicators/
 ├── raven_api/
+│   ├── app.py              # FastAPI entry point
 │   ├── etl.py              # Data loading, reshaping, and preprocessing
 │   ├── indicators.py       # Indicator calculation logic
 │   ├── utils.py            # (Empty, reserved for future use)
 │   ├── __init__.py         # Marks as package
-├── requirements.txt        # Dependencies
 └── README.md               # Project documentation
 ```
 
@@ -104,31 +122,35 @@ raven-streamflow-api/
 
 ## 📈 Input Data Format
 
-Input files should be in **Parquet** format with at least the following columns:
+Input CSV files should have columns like:
 
-* `date`: datetime of observation
-* `site`: name or ID of the location
-* `value`: streamflow or discharge value
+* `time`: datetime or timestamp of observation
+* `date`: date of observation
+* `hour`: hour of day
+* `precip [mm/day]`: precipitation amount
+* `sub_xxx1 [m3/s]`, `sub_xxx2 [m3/s]`, ..., `sub_xxxN [m3/s]`: streamflow values for subbasins
+
+Example columns:
+
+```
+time, date, hour, precip [mm/day], sub_xxx1 [m3/s], sub_xxx2 [m3/s], ..., sub_xxxN [m3/s]
+```
 
 ---
 
 ## 📤 Example Workflow
 
-1. Convert your CSV Raven output to long-format and save as Parquet using the helper:
+1. Use the sample Raven CSV file hosted online:
 
-   ```python
-   from raven_api.etl import load_raven_output, reshape_to_long, save_to_parquet
+```
+https://github.com/parisaaber/HydroFlowIndicators/raw/refs/heads/main/Hydrographs.csv
+```
 
-   df = load_raven_output("Results.csv")
-   long_df = reshape_to_long(df)
-   save_to_parquet(long_df, "flow_data.parquet")
-   ```
+2. Query indicators by sending a GET request to the `/indicators-local/` endpoint:
 
-2. Run the API and query indicators using:
-
-   ```
-   http://127.0.0.1:8000/indicators/?parquet_path=flow_data.parquet&break_point=2005
-   ```
+```
+http://127.0.0.1:8000/indicators-local/?csv_path=https://github.com/parisaaber/HydroFlowIndicators/raw/refs/heads/main/Hydrographs.csv&efn_threshold=0.2&break_point=2005
+```
 
 ---
 
