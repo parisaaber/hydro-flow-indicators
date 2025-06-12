@@ -154,19 +154,6 @@ http://127.0.0.1:8000/indicators-local/?csv_path=https://github.com/parisaaber/H
 
 ---
 
-## 🤝 Contributing
-
-Contributions, issues, and suggestions are welcome! Feel free to open a pull request or issue if you'd like to improve or extend this project.
-
----
-
 ## 🪪 License
 
 This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
-
----
-
-## 📬 Contact
-
-For questions or collaboration:
-📧 [parisa.aberi@machydro.ca](mailto:parisa.aberi@machydro.ca)
