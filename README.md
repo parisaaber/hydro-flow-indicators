@@ -1,113 +1,150 @@
-# HydroFlowIndicators
+# 🌊 Raven Streamflow Indicators API
 
-This repository provides a streamlined workflow for computing hydrologic flow indicators from model-generated or observed streamflow time series (e.g., Raven hydrologic model output). It includes tools for reading, reshaping, converting to Parquet, and extracting key indicators such as peak flows, flow timing, and ecological flow thresholds.
-
----
+This FastAPI-based application provides a web service for computing a suite of hydrological indicators from Raven hydrologic model output or any comparable streamflow time series in Parquet format. It supports environmental flow metrics, flood frequency analysis, and sub-period comparisons.
 
 ## 📦 Features
 
-- Load hydrological model output from CSV (Raven format).
-- Reshape data into long-format suitable for analysis.
-- Save streamflow time series as an efficient `.parquet` file.
-- Compute various hydrological indicators:
+- Load and preprocess Raven output or streamflow datasets
+- Calculate hydrologic indicators:
   - Mean annual flow
-  - Mean flow during Aug–Sep
-  - Peak flow timing (Julian day of maximum)
-  - Days below Environmental Flow Needs (EFN) threshold
-  - 2-year and 20-year peak flow estimates using Gumbel distribution
+  - Mean August–September flow
+  - Peak flow timing
+  - Days below EFN threshold
+  - Annual peak flow and flood quantiles (Gumbel)
+- Support for sub-period (e.g., pre/post intervention) comparisons
+- Built-in flood frequency analysis for return periods (e.g., Q2, Q20)
+- Exposed via RESTful API using FastAPI
 
 ---
 
-## 🔧 Dependencies
-
-- `pandas`
-- `numpy`
-- `duckdb`
-- `scipy`
-
-Install with:
+## 🛠 Installation
 
 ```bash
-pip install pandas numpy duckdb scipy
+# Clone the repo
+git clone https://github.com/your-username/raven-streamflow-api.git
+cd raven-streamflow-api
+
+# (Optional) create a virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+
+# Install dependencies
+pip install -r requirements.txt
 ````
 
----
+### Example `requirements.txt`
 
-## 🚀 Usage Example (e.g., in Colab)
-
-```python
-import requests
-
-# Dynamically load the script from GitHub
-exec(__import__("requests").get(
-    "https://raw.githubusercontent.com/parisaaber/HydroFlowIndicators/main/script.py"
-).text)
-
-# Define paths
-csv_path = "https://github.com/parisaaber/HydroFlowIndicators/raw/refs/heads/main/Hydrographs.csv"
-out_path = "/content/Hydrographs.parquet"
-
-# Process and analyze data
-df_long = reshape_to_long(load_raven_output(csv_path))
-save_to_parquet(df_long, out_path)
-indicators = calculate_indicators(out_path,break_point=1990)
-
-# Show result
-print(indicators)
+```txt
+fastapi
+uvicorn
+pandas
+numpy
+duckdb
+scipy
 ```
 
 ---
 
-## 📁 Input File Format
+## 🚀 Running the API
 
-The input `.csv` file should contain:
-
-* A `date` column (interpretable by `pandas.to_datetime`)
-* Multiple flow columns (e.g., `site_01`, `site_02`, ...) without "observed" in their name
-* Tab or comma delimiters
-
-Example:
-
-```
-date,time,hour,site_01,site_02,...
-1990-01-01,00:00,0,12.4,3.2,...
+```bash
+uvicorn app:app --reload
 ```
 
----
-
-## 📤 Output
-
-The workflow generates:
-
-1. A **Parquet file** with reshaped streamflow data:
-
-   * Path: `/content/Hydrographs.parquet` (or as specified in `out_path`)
-   * Structure: long-format with columns like `date`, `site`, `flow`
-
-2. A **DataFrame** with hydrological indicators:
-
-   * Columns:
-
-| Column            | Description                                  |
-| ----------------- | -------------------------------------------- |
-| site              | Site ID or name                              |
-| subperiod         | Time period split (e.g., full, before/after) |
-| Days below EFN    | Avg. days/year below environmental flow      |
-| 2-Year Peak Flow  | 2-year return period flow                    |
-| Mean Annual Flow  | Average annual flow                          |
-| Mean Aug-Sep Flow | Average flow in August–September             |
-| Peak Flow Timing  | Julian day of annual peak flow               |
-| 20-Year Peak Flow | 20-year return period flow                   |
+Then open your browser to:
+[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for the interactive Swagger UI.
 
 ---
 
-## 📘 License
+## 🔌 API Endpoints
 
-MIT License
+### `GET /`
+
+Basic welcome message.
 
 ---
 
-## 👩‍💻 Author
+### `GET /indicators/`
 
-Developed by [Parisa Aberi](https://github.com/parisaaber)
+Compute flow indicators from a Parquet file.
 
+#### Query Parameters:
+
+* `parquet_path` *(str, required)*: Path to the input Parquet file
+* `efn_threshold` *(float, optional, default=0.2)*: EFN threshold as a fraction of mean annual flow
+* `break_point` *(int, optional)*: Optional water year to split into subperiods
+
+#### Example:
+
+```
+/indicators/?parquet_path=data/flow_data.parquet&efn_threshold=0.2&break_point=2005
+```
+
+#### Response:
+
+A list of dictionaries, each containing flow indicators for a site and sub-period.
+
+---
+
+## 📂 Project Structure
+
+```text
+raven-streamflow-api/
+├── app.py                  # FastAPI entry point
+├── raven_api/
+│   ├── etl.py              # Data loading, reshaping, and preprocessing
+│   ├── indicators.py       # Indicator calculation logic
+│   ├── utils.py            # (Empty, reserved for future use)
+│   ├── __init__.py         # Marks as package
+├── requirements.txt        # Dependencies
+└── README.md               # Project documentation
+```
+
+---
+
+## 📈 Input Data Format
+
+Input files should be in **Parquet** format with at least the following columns:
+
+* `date`: datetime of observation
+* `site`: name or ID of the location
+* `value`: streamflow or discharge value
+
+---
+
+## 📤 Example Workflow
+
+1. Convert your CSV Raven output to long-format and save as Parquet using the helper:
+
+   ```python
+   from raven_api.etl import load_raven_output, reshape_to_long, save_to_parquet
+
+   df = load_raven_output("Results.csv")
+   long_df = reshape_to_long(df)
+   save_to_parquet(long_df, "flow_data.parquet")
+   ```
+
+2. Run the API and query indicators using:
+
+   ```
+   http://127.0.0.1:8000/indicators/?parquet_path=flow_data.parquet&break_point=2005
+   ```
+
+---
+
+## 🤝 Contributing
+
+Contributions, issues, and suggestions are welcome! Feel free to open a pull request or issue if you'd like to improve or extend this project.
+
+---
+
+## 🪪 License
+
+This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+
+---
+
+## 📬 Contact
+
+For questions or collaboration:
+📧 [parisa.aberi@machydro.ca](mailto:parisa.aberi@machydro.ca)
