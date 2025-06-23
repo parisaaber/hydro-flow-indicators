@@ -11,7 +11,7 @@ app = FastAPI(title="Raven API", version="0.1")
 logging.basicConfig(level=logging.INFO)
 
 
-def mean_annual_flow(parquet_path: str) -> pd.Series:
+def mean_annual_flow(parquet_path: str) -> pd.DataFrame:
     """
     Calculate mean annual flow for each site.
     """
@@ -20,9 +20,15 @@ def mean_annual_flow(parquet_path: str) -> pd.Series:
 
         df = con.execute(
             f"""
-            SELECT avg(value), site
-            FROM parquet_scan('{parquet_path}')
+            WITH mean_1 AS (
+                SELECT avg(value) AS maf_per_year, site, water_year
+                FROM parquet_scan('{parquet_path}')
+                GROUP BY site, water_year
+            )
+            SELECT site, avg(maf_per_year) AS mean_annual_flow
+            FROM mean_1
             GROUP BY site
+            ORDER BY site
         """
         ).fetchdf()
 
@@ -31,7 +37,7 @@ def mean_annual_flow(parquet_path: str) -> pd.Series:
         logging.error(f"Failed to read parquet file: {e}")
         raise RuntimeError(f"Failed to read parquet file: {e}")
 
-    return df.set_index("site")["mean_annual_flow"]
+    return df
 
 
 def mean_aug_sep_flow(df: pd.DataFrame) -> pd.Series:
