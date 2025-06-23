@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from routers import etl_router, indicators_router
+from api.routers import etl_router, indicators_router
 from __init__ import __version__ as VERSION
 
 
