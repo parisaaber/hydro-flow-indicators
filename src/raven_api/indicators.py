@@ -31,7 +31,7 @@ def mean_annual_flow(parquet_path: str) -> pd.Series:
         logging.error(f"Failed to read parquet file: {e}")
         raise RuntimeError(f"Failed to read parquet file: {e}")
 
-    return df.rename("mean_annual_flow")
+    return df.set_index("site")["mean_annual_flow"]
 
 
 def mean_aug_sep_flow(df: pd.DataFrame) -> pd.Series:
