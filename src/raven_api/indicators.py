@@ -21,7 +21,7 @@ def mean_annual_flow(parquet_path: str) -> pd.Series:
         df = con.execute(
             f"""
             SELECT avg(value), site
-            FROM {parquet_path}
+            FROM parquet_scan('{parquet_path}')
             GROUP BY site
         """
         ).fetchdf()
