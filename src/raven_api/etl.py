@@ -80,9 +80,11 @@ def load_raven_output(csv_path: str) -> pd.DataFrame:
     """
     df = pd.read_csv(csv_path, sep="\t|,", engine="python")
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
     df = df.drop(columns=["time", "hour"], errors="ignore")
     df = df.set_index("date")
     df = df.loc[:, ~df.columns.str.contains("observed", case=False)]
+
     return df
 
 
@@ -102,6 +104,14 @@ def reshape_to_long(df: pd.DataFrame, exclude_precip: bool = True) -> pd.DataFra
         precip_cols = [col for col in df.columns if "precip" in col.lower()]
         df = df.drop(columns=precip_cols, errors="ignore")
     long_df = df.melt(id_vars="date", var_name="site", value_name="value")
+
+    # Convert date to datetime and extract month, year, and water year
+    long_df["month"] = long_df["date"].dt.month
+    long_df["year"] = long_df["date"].dt.year
+    long_df["water_year"] = np.where(
+        long_df["month"] >= 10, long_df["year"] + 1, long_df["year"]
+    )
+
     long_df["value"] = pd.to_numeric(long_df["value"], errors="coerce")
     return long_df.dropna(subset=["value"])
 
