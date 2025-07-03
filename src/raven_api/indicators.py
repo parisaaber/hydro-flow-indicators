@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from typing import Optional
+from typing import Optional, List
 import pandas as pd
 import numpy as np
 import duckdb
@@ -7,7 +7,38 @@ from scipy.stats import gumbel_r
 import tempfile
 import os
 
+
 app = FastAPI(title="Raven API", version="0.1")
+
+
+def mean_annual_flow(con: duckdb.DuckDBPyConnection, parquet_path: str, sites: Optional[List[str]] = None) -> pd.DataFrame:
+    if sites:
+        sites_tuple = tuple(sites)
+        query = f"""
+            WITH mean_1 AS (
+                SELECT avg(value) AS maf_per_year, site, water_year
+                FROM parquet_scan('{parquet_path}')
+                WHERE site IN {sites_tuple}
+                GROUP BY site, water_year
+            )
+            SELECT site, avg(maf_per_year) AS mean_annual_flow
+            FROM mean_1
+            GROUP BY site
+            ORDER BY site
+        """
+    else:
+        query = f"""
+            WITH mean_1 AS (
+                SELECT avg(value) AS maf_per_year, site, water_year
+                FROM parquet_scan('{parquet_path}')
+                GROUP BY site, water_year
+            )
+            SELECT site, avg(maf_per_year) AS mean_annual_flow
+            FROM mean_1
+            GROUP BY site
+            ORDER BY site
+        """
+    return con.execute(query).fetchdf()
 
 
 def mean_annual_flow(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.DataFrame:
@@ -40,10 +71,15 @@ def mean_aug_sep_flow(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.D
     """
     Calculate the mean August–September flow for each site.
 
+
     Args:
         con: Active DuckDB connection.
         parquet_path: Path to input Parquet file.
 
+def mean_aug_sep_flow(con: duckdb.DuckDBPyConnection, parquet_path: str, sites: Optional[List[str]] = None) -> pd.DataFrame:
+    """
+    Calculate the mean August–September flow for each site.
+=======
     Returns:
         DataFrame with 'site' and 'mean_aug_sep_flow' columns.
     """
@@ -62,7 +98,36 @@ def mean_aug_sep_flow(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.D
         """
     ).fetchdf()
 
+    Args:
+        con: Active DuckDB connection.
+        parquet_path: Path to input Parquet file.
 
+    Returns:
+        DataFrame with 'site' and 'mean_aug_sep_flow' columns.
+    """
+    site_filter = ""
+    if sites:
+        sites_tuple = tuple(sites)
+        site_filter = f"AND site IN {sites_tuple}"
+    query = f"""
+        WITH aug_sep AS (
+            SELECT site, water_year, AVG(value) AS avg_aug_sep_flow
+            FROM parquet_scan('{parquet_path}')
+            WHERE EXTRACT(month FROM date) IN (8, 9)
+            {site_filter}
+            GROUP BY site, water_year
+        )
+        SELECT site, AVG(avg_aug_sep_flow) AS mean_aug_sep_flow
+        FROM aug_sep
+        GROUP BY site
+        ORDER BY site
+        """
+    return con.execute(query).fetchdf()
+
+
+def peak_flow_timing(con: duckdb.DuckDBPyConnection, parquet_path: str, sites: Optional[List[str]] = None) -> pd.DataFrame:
+    """
+=======
 def peak_flow_timing(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.DataFrame:
     """
     Estimate the average day of year of annual peak flow for each site.
@@ -74,11 +139,24 @@ def peak_flow_timing(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.Da
     Returns:
         DataFrame with 'site' and 'peak_flow_timing' columns.
     """
+
+    site_filter = ""
+    if sites:
+        sites_tuple = tuple(sites)
+        site_filter = f"AND site IN {sites_tuple}"
+    query= f"""
+        WITH daily AS (
+            SELECT site, water_year, value, EXTRACT(doy FROM date) AS doy
+            FROM parquet_scan('{parquet_path}')
+            WHERE value IS NOT NULL
+            {site_filter}
+=======
     return con.execute(
         f"""
         WITH daily AS (
             SELECT site, water_year, value, EXTRACT(doy FROM date) AS doy
             FROM parquet_scan('{parquet_path}')
+
         ),
         peaks AS (
             SELECT site, water_year,
@@ -90,10 +168,17 @@ def peak_flow_timing(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.Da
         GROUP BY site
         ORDER BY site
         """
+
+    return con.execute(query).fetchdf()
+
+
+def days_below_efn(con: duckdb.DuckDBPyConnection, parquet_path: str, EFN_threshold: float, sites: Optional[List[str]] = None) -> pd.DataFrame:
+=======
     ).fetchdf()
 
 
 def days_below_efn(con: duckdb.DuckDBPyConnection, parquet_path: str, EFN_threshold: float) -> pd.DataFrame:
+
     """
     Calculate the average number of days per year below the Environmental Flow Needs (EFN) threshold.
 
@@ -105,8 +190,16 @@ def days_below_efn(con: duckdb.DuckDBPyConnection, parquet_path: str, EFN_thresh
     Returns:
         DataFrame with 'site' and 'days_below_efn' columns.
     """
+
+    site_filter = ""
+    if sites:
+        sites_tuple = tuple(sites)
+        site_filter = f"AND p.site IN {sites_tuple}"
+    query= f"""
+=======
     return con.execute(
         f"""
+
         WITH mean_annual AS (
             SELECT site, water_year, AVG(value) AS maf_year
             FROM parquet_scan('{parquet_path}')
@@ -123,7 +216,12 @@ def days_below_efn(con: duckdb.DuckDBPyConnection, parquet_path: str, EFN_thresh
                    m.maf_site, m.maf_site * {EFN_threshold} AS threshold
             FROM parquet_scan('{parquet_path}') p
             JOIN mean_annual_site m ON p.site = m.site
+
+            WHERE value IS NOT NULL
+            {site_filter}
+=======
             WHERE p.value IS NOT NULL
+
         ),
         days_below AS (
             SELECT site, water_year,
@@ -136,10 +234,17 @@ def days_below_efn(con: duckdb.DuckDBPyConnection, parquet_path: str, EFN_thresh
         GROUP BY site
         ORDER BY site
         """
+
+    return con.execute(query).fetchdf()
+
+
+def annual_peaks(con: duckdb.DuckDBPyConnection, parquet_path: str, sites: Optional[List[str]] = None) -> pd.DataFrame:
+=======
     ).fetchdf()
 
 
 def annual_peaks(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.DataFrame:
+
     """
     Extract annual peak flow for each site and water year.
 
@@ -150,6 +255,24 @@ def annual_peaks(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.DataFr
     Returns:
         DataFrame with 'site', 'water_year', and 'annual_peak' columns.
     """
+
+    site_filter = ""
+    if sites:
+        sites_tuple = tuple(sites)
+        site_filter = f"AND site IN {sites_tuple}"
+    query= f"""
+        SELECT site, water_year, MAX(value) AS annual_peak
+        FROM parquet_scan('{parquet_path}')
+        WHERE Value IS NOT NULL
+        {site_filter}
+        GROUP BY site, water_year
+        ORDER BY site, water_year
+        """
+    return con.execute(query).fetchdf()
+
+
+def fit_ffa(peaks_df: pd.DataFrame, dist: str = "gumbel", return_periods: list[int] = [2, 20], sites: Optional[List[str]] = None) -> pd.DataFrame:
+=======
     return con.execute(
         f"""
         SELECT site, water_year, MAX(value) AS annual_peak
@@ -161,6 +284,7 @@ def annual_peaks(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.DataFr
 
 
 def fit_ffa(peaks_df: pd.DataFrame, dist: str = "gumbel", return_periods: list[int] = [2, 20]) -> pd.DataFrame:
+
     """
     Fit Flood Frequency Analysis using Gumbel distribution for specified return periods.
 
@@ -172,6 +296,8 @@ def fit_ffa(peaks_df: pd.DataFrame, dist: str = "gumbel", return_periods: list[i
     Returns:
         DataFrame with 'site' and return period discharge values (e.g., 'Q2', 'Q20').
     """
+    if sites:
+        peaks_df = peaks_df[peaks_df["site"].isin(sites)]
     result = []
     for site, group in peaks_df.groupby("site"):
         values = group["annual_peak"].dropna()
@@ -185,7 +311,11 @@ def fit_ffa(peaks_df: pd.DataFrame, dist: str = "gumbel", return_periods: list[i
     return pd.DataFrame(result)
 
 
+
+def peak_flows(con: duckdb.DuckDBPyConnection, parquet_path: str, sites: Optional[List[str]] = None) -> pd.DataFrame:
+=======
 def peak_flows(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.DataFrame:
+
     """
     Calculate mean annual peak flow for each site.
 
@@ -196,11 +326,24 @@ def peak_flows(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.DataFram
     Returns:
         DataFrame with 'site' and 'mean_annual_peak' columns.
     """
+
+    site_filter = ""
+    if sites:
+        sites_tuple = tuple(sites)
+        site_filter = f"AND site IN {sites_tuple}"
+    query= f"""
+        WITH annual_peaks AS (
+            SELECT site, water_year, MAX(value) AS annual_peak
+            FROM parquet_scan('{parquet_path}')
+            WHERE value IS NOT NULL
+            {site_filter}
+=======
     return con.execute(
         f"""
         WITH annual_peaks AS (
             SELECT site, water_year, MAX(value) AS annual_peak
             FROM parquet_scan('{parquet_path}')
+
             GROUP BY site, water_year
         )
         SELECT site, AVG(annual_peak) AS mean_annual_peak
@@ -208,11 +351,15 @@ def peak_flows(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.DataFram
         GROUP BY site
         ORDER BY site
         """
+
+    return con.execute(query).fetchdf()
+=======
     ).fetchdf()
 
 
+
 def calculate_all_indicators(
-    parquet_path: str, EFN_threshold: float = 0.2, break_point: Optional[int] = None
+    parquet_path: str, EFN_threshold: float = 0.2, break_point: Optional[int] = None,sites: Optional[List[str]] = None
 ) -> pd.DataFrame:
     """
     Calculate a set of hydrologic indicators for one or more subperiods.
