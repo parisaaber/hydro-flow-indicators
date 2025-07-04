@@ -123,10 +123,8 @@ Each accepts:
 hydro-flow-indicators/
 ├── src/
 │   ├── raven_api/
-│   │   ├── app.py           # FastAPI app and routes
 │   │   ├── etl.py           # Preprocessing and data loading
 │   │   ├── indicators.py    # Indicator calculation logic
-│   │   ├── utils.py         # Utility functions (reserved)
 │   │   └── __init__.py      # Package init
 │   └── api/
 │       ├── __init__.py
@@ -135,7 +133,6 @@ hydro-flow-indicators/
 ├── tests/
 │   └── test_data/
 │       └── Hydrographs.csv.gz  # Sample test data (compressed)
-├── requirements.txt
 └── README.md
 ```
 
