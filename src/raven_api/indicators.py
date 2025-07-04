@@ -66,37 +66,9 @@ def mean_annual_flow(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.Da
         """
     ).fetchdf()
 
-
-def mean_aug_sep_flow(con: duckdb.DuckDBPyConnection, parquet_path: str) -> pd.DataFrame:
-    """
-    Calculate the mean August–September flow for each site.
-
-
-    Args:
-        con: Active DuckDB connection.
-        parquet_path: Path to input Parquet file.
-
 def mean_aug_sep_flow(con: duckdb.DuckDBPyConnection, parquet_path: str, sites: Optional[List[str]] = None) -> pd.DataFrame:
     """
     Calculate the mean August–September flow for each site.
-=======
-    Returns:
-        DataFrame with 'site' and 'mean_aug_sep_flow' columns.
-    """
-    return con.execute(
-        f"""
-        WITH aug_sep AS (
-            SELECT site, water_year, AVG(value) AS avg_aug_sep_flow
-            FROM parquet_scan('{parquet_path}')
-            WHERE EXTRACT(month FROM date) IN (8, 9)
-            GROUP BY site, water_year
-        )
-        SELECT site, AVG(avg_aug_sep_flow) AS mean_aug_sep_flow
-        FROM aug_sep
-        GROUP BY site
-        ORDER BY site
-        """
-    ).fetchdf()
 
     Args:
         con: Active DuckDB connection.
