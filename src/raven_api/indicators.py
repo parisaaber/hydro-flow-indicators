@@ -241,6 +241,35 @@ def peak_flows(con: duckdb.DuckDBPyConnection, parquet_path: str, sites: Optiona
         """
     return con.execute(query).fetchdf()
 
+def weekly_flow_exceedance(con: duckdb.DuckDBPyConnection, parquet_path: str, sites: Optional[List[str]] = None) -> pd.DataFrame:
+    if sites:
+        sites_tuple = tuple(sites)
+        where_clause = f"WHERE site IN {sites_tuple}"
+    else:
+        where_clause = ""
+
+    query = f"""
+    SELECT
+        site,
+        CAST(strftime('%W', date) AS INTEGER) AS week,
+        quantile_cont(value, 0.90) AS p10,
+        quantile_cont(value, 0.80) AS p20,
+        quantile_cont(value, 0.70) AS p30,
+        quantile_cont(value, 0.60) AS p40,
+        quantile_cont(value, 0.50) AS p50,
+        quantile_cont(value, 0.40) AS p60,
+        quantile_cont(value, 0.30) AS p70,
+        quantile_cont(value, 0.20) AS p80,
+        quantile_cont(value, 0.05) AS p95
+    FROM parquet_scan('{parquet_path}')
+    {where_clause}
+    GROUP BY
+        site,
+        CAST(strftime('%W', date) AS INTEGER)
+    ORDER BY site, week
+    """
+    return con.execute(query).fetchdf()
+
 
 def calculate_all_indicators(
     parquet_path: str, EFN_threshold: float = 0.2, break_point: Optional[int] = None,sites: Optional[List[str]] = None
