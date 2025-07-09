@@ -15,6 +15,7 @@ This FastAPI-based application provides a web service for computing a suite of h
   * Peak flow timing
   * Days below EFN threshold
   * Annual peak flow and flood quantiles (Gumbel)
+  * Weekly flow exceedance thresholds
 * Support for sub-period (e.g., pre/post intervention) comparisons
 * Built-in flood frequency analysis for return periods (e.g., Q2, Q20)
 * Exposed via RESTful API using FastAPI
@@ -100,15 +101,17 @@ Compute indicators from a **local file path** or **web URL**.
 
 Fetch **specific indicators** (optionally filtered by site):
 
-| Endpoint                  | Description                            |
-| ------------------------- | -------------------------------------- |
-| `GET /mean-annual-flow/`  | Mean annual flow                       |
-| `GET /mean-aug-sep-flow/` | Mean August–September flow             |
-| `GET /peak-flow-timing/`  | Average peak flow timing (day of year) |
-| `GET /days-below-efn/`    | Days below EFN threshold               |
-| `GET /peak-flows/`        | Mean annual peak flows                 |
-| `GET /annual-peaks/`      | Annual peak flows per water year       |
-| `GET /fit-ffa/`           | Flood Frequency Analysis (Gumbel)      |
+| Endpoint                     | Description                            |
+| ---------------------------- | ------------------------------------ |
+| `GET /mean-annual-flow/`     | Mean annual flow                     |
+| `GET /mean-aug-sep-flow/`    | Mean August–September flow           |
+| `GET /peak-flow-timing/`     | Average peak flow timing (day of year) |
+| `GET /days-below-efn/`       | Days below EFN threshold             |
+| `GET /peak-flows/`           | Mean annual peak flows               |
+| `GET /annual-peaks/`         | Annual peak flows per water year    |
+| `GET /fit-ffa/`              | Flood Frequency Analysis (Gumbel)   |
+| `GET /weekly-flow-exceedance/` | Weekly flow exceedance thresholds   |
+
 
 Each accepts:
 
