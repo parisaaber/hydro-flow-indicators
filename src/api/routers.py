@@ -10,6 +10,7 @@ from src.raven_api.indicators import (
     days_below_efn,
     annual_peaks,
     peak_flows,
+    weekly_flow_exceedance,
     fit_ffa,
 )
 indicators_router = APIRouter(prefix="/indicators", tags=["Indicators"])
@@ -104,6 +105,15 @@ async def get_annual_peaks(parquet_src: str, sites: Optional[List[str]] = Query(
     con = duckdb.connect()
     try:
         df = annual_peaks(con, parquet_src, sites)
+        return df.to_dict(orient="records")
+    finally:
+        con.close()
+
+@indicators_router.get("/weekly_flow_exceedance")
+async def get_weekly_flow_exceedance(parquet_src: str, sites: Optional[List[str]] = Query(default=None)):
+    con = duckdb.connect()
+    try:
+        df = weekly_flow_exceedance(con, parquet_src, sites)
         return df.to_dict(orient="records")
     finally:
         con.close()
