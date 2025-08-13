@@ -1,6 +1,7 @@
 from typing import Optional, List
 from fastapi import APIRouter, Query
 import duckdb
+from fastapi import Depends
 from src.raven_api.etl import init_etl
 from src.raven_api.indicators import (
     calculate_all_indicators,
@@ -157,3 +158,4 @@ async def list_sites(parquet_src: str):
         return df["site"].tolist()
     finally:
         con.close()
+
