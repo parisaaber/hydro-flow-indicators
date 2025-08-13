@@ -7,9 +7,25 @@ from scipy.stats import gumbel_r
 import tempfile
 import os
 
-
 app = FastAPI(title="Raven API", version="0.1")
-
+def common_query_params(
+    parquet_src: str = Query(..., description="Full path to Parquet"),
+    sites: Optional[List[str]] = Query(None, description="List of site IDs", example=["sub11004314 [m3/s]"]),
+    start_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    temporal_resolution: str = Query("overall", description="overall|annual|daily|weekly"),
+    efn_threshold: float = Query(0.2, description="EFN threshold fraction"),
+    break_point: Optional[int] = Query(None, description="Water year to split subperiods"),
+):
+    return {
+        "parquet_src": parquet_src,
+        "sites": sites,
+        "start_date": start_date,
+        "end_date": end_date,
+        "temporal_resolution": temporal_resolution,
+        "efn_threshold": efn_threshold,
+        "break_point": break_point,
+    }
 
 def mean_annual_flow(con: duckdb.DuckDBPyConnection, parquet_path: str, sites: Optional[List[str]] = None) -> pd.DataFrame:
     if sites:
@@ -350,3 +366,4 @@ def calculate_all_indicators(
 
     except Exception as e:
         raise RuntimeError(f"Error in calculating indicators: {e}")
+
