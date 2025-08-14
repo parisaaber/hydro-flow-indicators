@@ -11,7 +11,14 @@ import os
 app = FastAPI(title="Raven API", version="0.1")
 
 
-def mean_annual_flow(con: duckdb.DuckDBPyConnection, parquet_path: str, sites: Optional[List[str]] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, temporal_resolution: str = "overall") -> pd.DataFrame:
+def mean_annual_flow(
+    con: duckdb.DuckDBPyConnection,
+    parquet_path: str,
+    sites: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    temporal_resolution: str = "overall"
+) -> pd.DataFrame:
     
     sites_filter = ""
     if sites:
@@ -51,7 +58,14 @@ def mean_annual_flow(con: duckdb.DuckDBPyConnection, parquet_path: str, sites: O
     return con.execute(query).fetchdf()
 
 
-def mean_aug_sep_flow(con: duckdb.DuckDBPyConnection, parquet_path: str, sites: Optional[List[str]] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, temporal_resolution: str = "overall") -> pd.DataFrame:
+def mean_aug_sep_flow(
+    con: duckdb.DuckDBPyConnection,
+    parquet_path: str,
+    sites: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    temporal_resolution: str = "overall"
+) -> pd.DataFrame:
     """
     Calculate the mean August–September flow for each site.
 
@@ -98,7 +112,7 @@ def mean_aug_sep_flow(con: duckdb.DuckDBPyConnection, parquet_path: str, sites: 
             FROM aug_sep
             GROUP BY site
             ORDER BY site
-        """ 
+        """
     return con.execute(query).fetchdf()
 
 
@@ -139,7 +153,8 @@ def peak_flow_timing(
             ),
             peaks AS (
                 SELECT site, water_year,
-                       FIRST_VALUE(doy) OVER (PARTITION BY site, water_year ORDER BY value DESC) AS peak_doy
+                FIRST_VALUE(doy) OVER (PARTITION BY site,
+                water_year ORDER BY value DESC) AS peak_doy
                 FROM daily
             )
             SELECT site, water_year, peak_doy
@@ -158,7 +173,8 @@ def peak_flow_timing(
             ),
             peaks AS (
                 SELECT site, water_year,
-                       FIRST_VALUE(doy) OVER (PARTITION BY site, water_year ORDER BY value DESC) AS peak_doy
+                FIRST_VALUE(doy) OVER (PARTITION BY site,
+                water_year ORDER BY value DESC) AS peak_doy
                 FROM daily
             )
             SELECT site, AVG(peak_doy) AS peak_flow_timing
@@ -167,6 +183,7 @@ def peak_flow_timing(
             ORDER BY site
         """
     return con.execute(query).fetchdf()
+
 
 def days_below_efn(
     con: duckdb.DuckDBPyConnection,
@@ -178,12 +195,14 @@ def days_below_efn(
     temporal_resolution: str = "overall"
 ) -> pd.DataFrame:
     """
-    Calculate the average number of days per year below the Environmental Flow Needs (EFN) threshold.
+    Calculate the average number of days per year
+    below the Environmental Flow Needs (EFN) threshold.
 
     Args:
         con: Active DuckDB connection.
         parquet_path: Path to input Parquet file.
-        EFN_threshold: Proportion (e.g., 0.2) of mean annual flow used as the threshold.
+        EFN_threshold: Proportion (e.g., 0.2) of
+        mean annual flow used as the threshold.
 
     Returns:
         DataFrame with 'site' and 'days_below_efn' columns.
@@ -274,7 +293,7 @@ def annual_peaks(
     if start_date and end_date:
         date_filter = f"AND date BETWEEN '{start_date}' AND '{end_date}'"
 
-    query= f"""
+    query = f"""
         SELECT site, water_year, MAX(value) AS annual_peak
         FROM parquet_scan('{parquet_path}')
         WHERE value IS NOT NULL
@@ -293,7 +312,8 @@ def fit_ffa(
     sites: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """
-    Fit Flood Frequency Analysis using Gumbel distribution for specified return periods.
+    Fit Flood Frequency Analysis using Gumbel distribution
+    for specified return periods.
 
     Args:
         peaks_df: DataFrame with 'site', 'water_year', 'annual_peak'.
@@ -301,7 +321,8 @@ def fit_ffa(
         return_periods: List of return periods to estimate (e.g., [2, 20]).
 
     Returns:
-        DataFrame with 'site' and return period discharge values (e.g., 'Q2', 'Q20').
+        DataFrame with 'site' and return period
+        discharge values (e.g., 'Q2', 'Q20').
     """
     if sites:
         peaks_df = peaks_df[peaks_df["site"].isin(sites)]
@@ -312,7 +333,11 @@ def fit_ffa(
             continue
         if dist == "gumbel":
             loc, scale = gumbel_r.fit(values)
-            rp_values = {f"Q{rp}": gumbel_r.ppf(1 - 1 / rp, loc=loc, scale=scale) for rp in return_periods}
+            rp_values = {f"Q{rp}": gumbel_r.ppf(
+                1 - 1 / rp,
+                loc=loc,
+                scale=scale
+            ) for rp in return_periods}
             rp_values["site"] = site
             result.append(rp_values)
     return pd.DataFrame(result)
@@ -344,7 +369,7 @@ def peak_flows(
     if start_date and end_date:
         date_filter = f"AND date BETWEEN '{start_date}' AND '{end_date}'"
 
-    query= f"""
+    query = f"""
         WITH annual_peaks AS (
             SELECT site, water_year, MAX(value) AS annual_peak
             FROM parquet_scan('{parquet_path}')
@@ -406,7 +431,6 @@ def weekly_flow_exceedance(
     return con.execute(query).fetchdf()
 
 
-
 def calculate_all_indicators(
     parquet_path: str,
     EFN_threshold: float = 0.2,
@@ -420,7 +444,7 @@ def calculate_all_indicators(
 
     Indicators include:
     - Mean annual flow
-    - August–September mean flow
+    - August-September mean flow
     - Peak flow timing (DOY)
     - Number of days below EFN threshold
     - Mean annual peak flow
@@ -428,8 +452,10 @@ def calculate_all_indicators(
 
     Args:
         parquet_path: Path to Raven-generated Parquet file.
-        EFN_threshold: Proportion of MAF used for low flow threshold (e.g., 0.2).
-        break_point: Water year to split subperiods (e.g., 2000), or None for full period.
+        EFN_threshold: Proportion of MAF used for
+        low flow threshold (e.g., 0.2).
+        break_point: Water year to split subperiods (e.g., 2000),
+        or None for full period.
         sites: List of site IDs to filter (optional).
         start_date: Start date for filtering data (optional).
         end_date: End date for filtering data (optional).
@@ -467,9 +493,17 @@ def calculate_all_indicators(
         df["date"] = pd.to_datetime(df["date"])
         df["month"] = df["date"].dt.month
         df["year"] = df["date"].dt.year
-        df["water_year"] = np.where(df["month"] >= 10, df["year"] + 1, df["year"])
+        df["water_year"] = np.where(
+            df["month"] >= 10,
+            df["year"] + 1,
+            df["year"]
+        )
         df["subperiod"] = (
-            np.where(df["water_year"] <= break_point, f"before_{break_point}", f"after_{break_point}")
+            np.where(
+                df["water_year"] <= break_point,
+                f"before_{break_point}",
+                f"after_{break_point}"
+            )
             if break_point else "full_period"
         )
 
@@ -477,23 +511,67 @@ def calculate_all_indicators(
 
         for period in df["subperiod"].unique():
             sub_df = df[df["subperiod"] == period]
-            with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmpfile:
+            with tempfile.NamedTemporaryFile(
+                suffix=".parquet",
+                delete=False
+            ) as tmpfile:
                 temp_parquet_path = tmpfile.name
             sub_df.to_parquet(temp_parquet_path)
 
             indicators = pd.concat(
                 [
-                    mean_annual_flow(con, temp_parquet_path, sites=sites, start_date=start_date, end_date=end_date).set_index("site"),
-                    mean_aug_sep_flow(con, temp_parquet_path, sites=sites, start_date=start_date, end_date=end_date).set_index("site"),
-                    peak_flow_timing(con, temp_parquet_path, sites=sites, start_date=start_date, end_date=end_date).set_index("site"),
-                    days_below_efn(con, temp_parquet_path, EFN_threshold, sites=sites, start_date=start_date, end_date=end_date).set_index("site"),
-                    peak_flows(con, temp_parquet_path, sites=sites, start_date=start_date, end_date=end_date).set_index("site"),
+                    mean_annual_flow(
+                        con,
+                        temp_parquet_path,
+                        sites=sites,
+                        start_date=start_date,
+                        end_date=end_date
+                    ).set_index("site"),
+                    mean_aug_sep_flow(
+                        con,
+                        temp_parquet_path,
+                        sites=sites,
+                        start_date=start_date,
+                        end_date=end_date
+                    ).set_index("site"),
+                    peak_flow_timing(
+                        con,
+                        temp_parquet_path,
+                        sites=sites,
+                        start_date=start_date,
+                        end_date=end_date
+                    ).set_index("site"),
+                    days_below_efn(
+                        con,
+                        temp_parquet_path,
+                        EFN_threshold,
+                        sites=sites,
+                        start_date=start_date,
+                        end_date=end_date
+                    ).set_index("site"),
+                    peak_flows(
+                        con,
+                        temp_parquet_path,
+                        sites=sites,
+                        start_date=start_date,
+                        end_date=end_date
+                    ).set_index("site"),
                 ],
                 axis=1,
             )
 
-            peaks_df = annual_peaks(con, temp_parquet_path, sites=sites, start_date=start_date, end_date=end_date)
-            ffa = fit_ffa(peaks_df, return_periods=[2, 20], sites=sites).set_index("site")
+            peaks_df = annual_peaks(
+                con,
+                temp_parquet_path,
+                sites=sites,
+                start_date=start_date,
+                end_date=end_date
+            )
+            ffa = fit_ffa(
+                peaks_df,
+                return_periods=[2, 20],
+                sites=sites
+            ).set_index("site")
 
             all_indicators = indicators.join(ffa, how="left")
             all_indicators["subperiod"] = period
@@ -509,13 +587,14 @@ def calculate_all_indicators(
     except Exception as e:
         raise RuntimeError(f"Error in calculating indicators: {e}")
 
+
 def hydrograph(
     con: duckdb.DuckDBPyConnection,
     parquet_path: str,
     sites: Optional[List[str]] = None,
     start_date: Optional[str] = None,  # Format: "YYYY-MM-DD"
     end_date: Optional[str] = None,    # Format: "YYYY-MM-DD"
-    temporal_resolution: str = "daily"  # "daily", "weekly", "monthly", "seasonal"
+    temporal_resolution: str = "daily"  # "weekly","monthly", "seasonal"
 ) -> pd.DataFrame:
 
     sites_filter = ""
@@ -536,16 +615,23 @@ def hydrograph(
     elif temporal_resolution == "seasonal":
         # Define season as "YYYY-Season"
         group_expr = """
-            strftime('%Y', date) || '-' || 
+            strftime('%Y', date) || '-' ||
             CASE
-                WHEN CAST(strftime('%m', date) AS INTEGER) IN (12, 1, 2) THEN 'Winter'
-                WHEN CAST(strftime('%m', date) AS INTEGER) BETWEEN 3 AND 5 THEN 'Spring'
-                WHEN CAST(strftime('%m', date) AS INTEGER) BETWEEN 6 AND 8 THEN 'Summer'
-                WHEN CAST(strftime('%m', date) AS INTEGER) BETWEEN 9 AND 11 THEN 'Fall'
+                WHEN CAST(strftime('%m', date) AS INTEGER)
+                IN (12, 1, 2) THEN 'Winter'
+                WHEN CAST(strftime('%m', date) AS INTEGER)
+                BETWEEN 3 AND 5 THEN 'Spring'
+                WHEN CAST(strftime('%m', date) AS INTEGER)
+                BETWEEN 6 AND 8 THEN 'Summer'
+                WHEN CAST(strftime('%m', date) AS INTEGER)
+                BETWEEN 9 AND 11 THEN 'Fall'
             END
         """
     else:
-        raise ValueError("Invalid temporal_resolution: choose from daily, weekly, monthly, seasonal")
+        raise ValueError(
+            "Invalid temporal_resolution: choose from"
+            "daily, weekly, monthly, seasonal"
+                        )
 
     query = f"""
         SELECT

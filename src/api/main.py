@@ -4,7 +4,6 @@ from src.api.routers import etl_router, indicators_router
 from src.api import __version__ as VERSION
 
 
-
 app = FastAPI(
     title="Raven Model API",
     description="""
@@ -14,4 +13,8 @@ app = FastAPI(
 )
 
 app.include_router(etl_router, prefix="/etl", tags=["ETL"])
-app.include_router(indicators_router, prefix="/indicators", tags=["Indicators"])
+app.include_router(
+    indicators_router,
+    prefix="/indicators",
+    tags=["Indicators"]
+)
