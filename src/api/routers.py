@@ -58,42 +58,7 @@ def common_parameters(
     }
 
 
-def temporal_parameters(
-    efn_threshold: float = Query(
-        0.2,
-        description="Environmental Flow Needs (EFN) threshold as"
-        "a fraction of mean annual flow.",
-        example=0.2,
-    ),
-    break_point: Optional[int] = Query(
-        None,
-        description="Water year to split subperiods (e.g., 2000),"
-        "or None for full period.",
-        example=2000,
-    ),
-    temporal_resolution: str = Query(
-        "overall",
-        description="Temporal resolution:"
-        "'overall' (single value) or 'annual' (one value per year).",
-        example="annual",
-    ),
-    return_periods: str = Query(
-        "2,20",
-        description="Comma-separated list of return periods"
-        "for FFA (e.g., '2,20,50').",
-        example="2,20",
-    ),
-) -> dict:
-    return {
-        "efn_threshold": efn_threshold,
-        "break_point": break_point,
-        "temporal_resolution": temporal_resolution,
-        "return_periods": return_periods,
-    }
-
-
 CommonsDep = Annotated[dict, Depends(common_parameters)]
-TemporalDep = Annotated[dict, Depends(temporal_parameters)]
 
 
 def get_conn():
@@ -101,13 +66,27 @@ def get_conn():
 
 
 @indicators_router.get("/")
-async def get_indicators(commons: CommonsDep, temporal: TemporalDep):
+async def get_indicators(
+    commons: CommonsDep = Depends(),
+    efn_threshold: float = Query(
+        0.2,
+        description="Environmental Flow Needs (EFN) threshold"
+        "as a fraction of mean annual flow.",
+        example=0.2
+    ),
+    break_point: Optional[int] = Query(
+        None,
+        description="Water year to split subperiods (e.g., 2000),"
+        "or None for full period.",
+        example=2000
+    )
+):
     """Compute all flow indicators"
     "(optionally filtered by site and date range)."""
     result_df = calculate_all_indicators(
         parquet_path=commons["parquet_src"],
-        EFN_threshold=temporal["efn_threshold"],
-        break_point=temporal["break_point"],
+        EFN_threshold=efn_threshold,
+        break_point=break_point,
         sites=commons["sites"],
         start_date=commons["start_date"],
         end_date=commons["end_date"],
@@ -116,9 +95,16 @@ async def get_indicators(commons: CommonsDep, temporal: TemporalDep):
 
 
 @indicators_router.get("/mean_annual_flow")
-async def get_maf(commons: CommonsDep, temporal: TemporalDep):
-    """Compute mean annual flow (overall or per year)."""
-    con = get_conn()
+async def get_maf(
+    commons: CommonsDep = Depends(),
+    temporal_resolution: str = Query(
+        default="overall",
+        description="Temporal resolution: 'overall' (single value)"
+        "or 'annual' (one value per year).",
+        example="annual"
+    ),
+):
+    con = duckdb.connect()
     try:
         result_df = mean_annual_flow(
             con,
@@ -126,7 +112,7 @@ async def get_maf(commons: CommonsDep, temporal: TemporalDep):
             sites=commons["sites"],
             start_date=commons["start_date"],
             end_date=commons["end_date"],
-            temporal_resolution=temporal["temporal_resolution"],
+            temporal_resolution=temporal_resolution,
         )
         return result_df.to_dict(orient="records")
     finally:
@@ -134,7 +120,15 @@ async def get_maf(commons: CommonsDep, temporal: TemporalDep):
 
 
 @indicators_router.get("/mean_aug_sep_flow")
-async def get_mean_aug_sep_flow(commons: CommonsDep, temporal: TemporalDep):
+async def get_mean_aug_sep_flow(
+    commons: CommonsDep = Depends(),
+    temporal_resolution: str = Query(
+        default="overall",
+        description="Temporal resolution: 'overall' (single value)"
+        "or 'annual' (one value per year).",
+        example="annual"
+    ),
+):
     """Compute mean flow for August-September (overall or per year)."""
     con = get_conn()
     try:
@@ -144,7 +138,7 @@ async def get_mean_aug_sep_flow(commons: CommonsDep, temporal: TemporalDep):
             sites=commons["sites"],
             start_date=commons["start_date"],
             end_date=commons["end_date"],
-            temporal_resolution=temporal["temporal_resolution"],
+            temporal_resolution=temporal_resolution,
         )
         return df.to_dict(orient="records")
     finally:
@@ -152,9 +146,18 @@ async def get_mean_aug_sep_flow(commons: CommonsDep, temporal: TemporalDep):
 
 
 @indicators_router.get("/peak_flow_timing")
-async def get_peak_flow_timing(commons: CommonsDep, temporal: TemporalDep):
-    """Compute timing of peak flows (overall or per year)."""
-    con = get_conn()
+async def get_peak_flow_timing(
+    commons: CommonsDep = Depends(),
+    temporal_resolution: str = Query(
+        default="overall",
+        description="Temporal resolution: 'overall' (average across years)"
+        "or 'annual' (one value per year).",
+        example="annual"
+    ),
+):
+    """Compute peak flow timing (overall or per year)"
+    "for selected sites and time range."""
+    con = duckdb.connect()
     try:
         df = peak_flow_timing(
             con,
@@ -162,7 +165,7 @@ async def get_peak_flow_timing(commons: CommonsDep, temporal: TemporalDep):
             sites=commons["sites"],
             start_date=commons["start_date"],
             end_date=commons["end_date"],
-            temporal_resolution=temporal["temporal_resolution"],
+            temporal_resolution=temporal_resolution,
         )
         return df.to_dict(orient="records")
     finally:
@@ -170,18 +173,33 @@ async def get_peak_flow_timing(commons: CommonsDep, temporal: TemporalDep):
 
 
 @indicators_router.get("/days_below_efn")
-async def get_days_below_efn(commons: CommonsDep, temporal: TemporalDep):
-    """Compute number of days below Environmental Flow Needs (EFN)."""
-    con = get_conn()
+async def get_days_below_efn(
+    commons: CommonsDep = Depends(),
+    efn_threshold: float = Query(
+        default=0.2,
+        description="Environmental Flow Needs (EFN) threshold"
+        "as a fraction of mean annual flow.",
+        example=0.2
+    ),
+    temporal_resolution: str = Query(
+        default="overall",
+        description="Temporal resolution: 'overall' (average across years)"
+        "or 'annual' (one value per year).",
+        example="annual"
+    ),
+):
+    """Compute the number of days below EFN for"
+    "selected sites and time range."""
+    con = duckdb.connect()
     try:
         df = days_below_efn(
             con,
             commons["parquet_src"],
-            EFN_threshold=temporal["efn_threshold"],
+            EFN_threshold=efn_threshold,
             sites=commons["sites"],
             start_date=commons["start_date"],
             end_date=commons["end_date"],
-            temporal_resolution=temporal["temporal_resolution"],
+            temporal_resolution=temporal_resolution,
         )
         return df.to_dict(orient="records")
     finally:
@@ -241,11 +259,15 @@ async def get_peak_flows(commons: CommonsDep):
 
 @indicators_router.get("/flood_frequency_analysis")
 async def get_flood_frequency_analysis(
-    commons: CommonsDep,
-    temporal: TemporalDep
+    commons: CommonsDep = Depends(),
+    return_periods: str = Query(
+        default="2,20",
+        description="Comma-separated list of return periods (e.g., '2,20,50')",
+        example="2,20"
+    ),
 ):
     """Fit Flood Frequency Analysis (FFA) using Gumbel distribution."""
-    con = get_conn()
+    con = duckdb.connect()
     try:
         peaks_df = annual_peaks(
             con,
@@ -255,10 +277,8 @@ async def get_flood_frequency_analysis(
             end_date=commons["end_date"],
         )
         rp_list = [
-            int(rp.strip())
-            for rp in (temporal["return_periods"] or "").split(",")
-            if rp.strip().isdigit()
-        ]
+            int(rp.strip()) for rp in return_periods.split(",")
+            if rp.strip().isdigit()]
         ffa_df = fit_ffa(
             peaks_df,
             return_periods=rp_list,
@@ -270,10 +290,19 @@ async def get_flood_frequency_analysis(
 
 
 @indicators_router.get("/hydrograph")
-async def get_hydrograph(commons: CommonsDep, temporal: TemporalDep):
-    """Return a hydrograph (time series of flow)"
-    "for the specified sites with optional temporal aggregation."""
-    con = get_conn()
+async def get_hydrograph(
+    commons: CommonsDep = Depends(),
+    temporal_resolution: str = Query(
+        "daily",
+        description="Temporal resolution of the hydrograph."
+        "Choose from: 'daily', 'weekly', 'monthly', 'seasonal'."
+    ),
+):
+    """
+    Return a hydrograph (time series of flow) for the specified site(s),"
+    "with optional time range filtering and temporal aggregation.
+    """
+    con = duckdb.connect()
     try:
         df = hydrograph(
             con,
@@ -281,7 +310,7 @@ async def get_hydrograph(commons: CommonsDep, temporal: TemporalDep):
             sites=commons["sites"],
             start_date=commons["start_date"],
             end_date=commons["end_date"],
-            temporal_resolution=temporal["temporal_resolution"],
+            temporal_resolution=temporal_resolution
         )
         return df.to_dict(orient="records")
     finally:
