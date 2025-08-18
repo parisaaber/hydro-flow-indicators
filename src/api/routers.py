@@ -67,7 +67,7 @@ def get_conn():
 
 @indicators_router.get("/")
 async def get_indicators(
-    commons: CommonsDep = Depends(),
+    commons: CommonsDep,
     efn_threshold: float = Query(
         0.2,
         description="Environmental Flow Needs (EFN) threshold"
@@ -96,7 +96,7 @@ async def get_indicators(
 
 @indicators_router.get("/mean_annual_flow")
 async def get_maf(
-    commons: CommonsDep = Depends(),
+    commons: CommonsDep,
     temporal_resolution: str = Query(
         default="overall",
         description="Temporal resolution: 'overall' (single value)"
@@ -121,7 +121,7 @@ async def get_maf(
 
 @indicators_router.get("/mean_aug_sep_flow")
 async def get_mean_aug_sep_flow(
-    commons: CommonsDep = Depends(),
+    commons: CommonsDep,
     temporal_resolution: str = Query(
         default="overall",
         description="Temporal resolution: 'overall' (single value)"
@@ -147,7 +147,7 @@ async def get_mean_aug_sep_flow(
 
 @indicators_router.get("/peak_flow_timing")
 async def get_peak_flow_timing(
-    commons: CommonsDep = Depends(),
+    commons: CommonsDep,
     temporal_resolution: str = Query(
         default="overall",
         description="Temporal resolution: 'overall' (average across years)"
@@ -174,7 +174,7 @@ async def get_peak_flow_timing(
 
 @indicators_router.get("/days_below_efn")
 async def get_days_below_efn(
-    commons: CommonsDep = Depends(),
+    commons: CommonsDep,
     efn_threshold: float = Query(
         default=0.2,
         description="Environmental Flow Needs (EFN) threshold"
@@ -259,7 +259,7 @@ async def get_peak_flows(commons: CommonsDep):
 
 @indicators_router.get("/flood_frequency_analysis")
 async def get_flood_frequency_analysis(
-    commons: CommonsDep = Depends(),
+    commons: CommonsDep,
     return_periods: str = Query(
         default="2,20",
         description="Comma-separated list of return periods (e.g., '2,20,50')",
@@ -291,7 +291,7 @@ async def get_flood_frequency_analysis(
 
 @indicators_router.get("/hydrograph")
 async def get_hydrograph(
-    commons: CommonsDep = Depends(),
+    commons: CommonsDep,
     temporal_resolution: str = Query(
         "daily",
         description="Temporal resolution of the hydrograph."
