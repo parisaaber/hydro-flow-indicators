@@ -4,8 +4,6 @@ import pandas as pd
 import numpy as np
 import duckdb
 from scipy.stats import gumbel_r
-import tempfile
-import os
 
 
 app = FastAPI(title="Raven API", version="0.1")
@@ -19,7 +17,6 @@ def mean_annual_flow(
     end_date: Optional[str] = None,
     temporal_resolution: str = "overall"
 ) -> pd.DataFrame:
-    
     sites_filter = ""
     if sites:
         sites_tuple = tuple(sites)
@@ -242,7 +239,7 @@ def days_below_efn(
         ,
         days_below AS (
             SELECT site, water_year,
-                   COUNT(*) FILTER (WHERE value < threshold) AS days_below_efn
+            COUNT(*) FILTER (WHERE value < threshold) AS days_below_efn
             FROM daily_with_threshold
             GROUP BY site, water_year
         )
@@ -255,7 +252,7 @@ def days_below_efn(
         ,
         days_below AS (
             SELECT site, water_year,
-                   COUNT(*) FILTER (WHERE value < threshold) AS days_below_efn
+            COUNT(*) FILTER (WHERE value < threshold) AS days_below_efn
             FROM daily_with_threshold
             GROUP BY site, water_year
         )
@@ -454,8 +451,8 @@ def calculate_all_indicators(
         parquet_path: Path to Raven-generated Parquet file.
         EFN_threshold: Proportion of MAF used for
         low flow threshold (e.g., 0.2).
-        break_point: Water year to split subperiods (e.g., 2000),
-        or None for full period.
+        break_point: Water year to split subperiods
+        (e.g., 2000), or None for full period.
         sites: List of site IDs to filter (optional).
         start_date: Start date for filtering data (optional).
         end_date: End date for filtering data (optional).
@@ -466,106 +463,108 @@ def calculate_all_indicators(
     try:
         con = duckdb.connect()
 
-        # Build site filter SQL if sites are specified
+        # Build date and site filters
+        date_filter = ""
+        if start_date and end_date:
+            date_filter = f"WHERE date BETWEEN '{start_date}' AND '{end_date}'"
+
         site_filter = ""
         if sites:
             sites_tuple = tuple(sites)
-            site_filter = f"AND site IN {sites_tuple}"
+            site_filter = (
+                f"AND site IN {sites_tuple}"
+                if date_filter else f"WHERE site IN {sites_tuple}"
+            )
 
-        # Build date filter SQL if start_date and end_date provided
-        date_filter = ""
-        if start_date and end_date:
-            date_filter = f"AND date BETWEEN '{start_date}' AND '{end_date}'"
-
-        # Fetch filtered data from parquet
         query = f"""
-            SELECT date, value, site
+            SELECT date, site
             FROM parquet_scan('{parquet_path}')
-            WHERE value IS NOT NULL
-            {site_filter}
             {date_filter}
+            {site_filter}
         """
-        df = con.execute(query).fetchdf()
-    except Exception as e:
-        raise RuntimeError(f"Failed to read parquet file: {e}")
-
-    try:
-        df["date"] = pd.to_datetime(df["date"])
-        df["month"] = df["date"].dt.month
-        df["year"] = df["date"].dt.year
-        df["water_year"] = np.where(
-            df["month"] >= 10,
-            df["year"] + 1,
-            df["year"]
+        df_dates = con.execute(query).fetchdf()
+        df_dates["date"] = pd.to_datetime(df_dates["date"])
+        df_dates["month"] = df_dates["date"].dt.month
+        df_dates["year"] = df_dates["date"].dt.year
+        df_dates["water_year"] = np.where(
+            df_dates["month"] >= 10,
+            df_dates["year"] + 1,
+            df_dates["year"],
         )
-        df["subperiod"] = (
-            np.where(
-                df["water_year"] <= break_point,
+
+        # Define subperiods
+        if break_point:
+            df_dates["subperiod"] = np.where(
+                df_dates["water_year"] <= break_point,
                 f"before_{break_point}",
                 f"after_{break_point}"
             )
-            if break_point else "full_period"
-        )
+            subperiods = df_dates["subperiod"].unique()
+        else:
+            subperiods = ["full_period"]
 
         results = []
 
-        for period in df["subperiod"].unique():
-            sub_df = df[df["subperiod"] == period]
-            with tempfile.NamedTemporaryFile(
-                suffix=".parquet",
-                delete=False
-            ) as tmpfile:
-                temp_parquet_path = tmpfile.name
-            sub_df.to_parquet(temp_parquet_path)
+        for period in subperiods:
+            if period == "full_period":
+                sub_start = start_date
+                sub_end = end_date
+            else:
+                if "before" in period:
+                    sub_start = start_date
+                    sub_end = f"{break_point}-09-30"
+                else:
+                    sub_start = f"{break_point + 1}-10-01"
+                    sub_end = end_date
 
             indicators = pd.concat(
                 [
                     mean_annual_flow(
                         con,
-                        temp_parquet_path,
+                        parquet_path,
                         sites=sites,
-                        start_date=start_date,
-                        end_date=end_date
+                        start_date=sub_start,
+                        end_date=sub_end
                     ).set_index("site"),
                     mean_aug_sep_flow(
                         con,
-                        temp_parquet_path,
+                        parquet_path,
                         sites=sites,
-                        start_date=start_date,
-                        end_date=end_date
+                        start_date=sub_start,
+                        end_date=sub_end
                     ).set_index("site"),
                     peak_flow_timing(
                         con,
-                        temp_parquet_path,
+                        parquet_path,
                         sites=sites,
-                        start_date=start_date,
-                        end_date=end_date
+                        start_date=sub_start,
+                        end_date=sub_end
                     ).set_index("site"),
                     days_below_efn(
                         con,
-                        temp_parquet_path,
+                        parquet_path,
                         EFN_threshold,
                         sites=sites,
-                        start_date=start_date,
-                        end_date=end_date
+                        start_date=sub_start,
+                        end_date=sub_end
                     ).set_index("site"),
                     peak_flows(
                         con,
-                        temp_parquet_path,
+                        parquet_path,
                         sites=sites,
-                        start_date=start_date,
-                        end_date=end_date
+                        start_date=sub_start,
+                        end_date=sub_end
                     ).set_index("site"),
                 ],
-                axis=1,
+                axis=1
             )
 
             peaks_df = annual_peaks(
                 con,
-                temp_parquet_path,
+                parquet_path,
                 sites=sites,
-                start_date=start_date,
-                end_date=end_date
+                start_date=sub_start,
+                end_date=sub_end
             )
             ffa = fit_ffa(
                 peaks_df,
@@ -576,8 +575,6 @@ def calculate_all_indicators(
             all_indicators = indicators.join(ffa, how="left")
             all_indicators["subperiod"] = period
             results.append(all_indicators.reset_index())
-
-            os.remove(temp_parquet_path)
 
         con.close()
         final_df = pd.concat(results, ignore_index=True)
