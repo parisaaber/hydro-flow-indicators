@@ -6,19 +6,20 @@ This FastAPI-based application provides a web service for computing a suite of h
 
 ## 📦 Features
 
-* Load and preprocess Raven output or streamflow datasets from local files or web URLs
-* Filter results by one or more `site` IDs
-* Calculate hydrologic indicators:
+- Load and preprocess Raven output or streamflow datasets from local files or web URLs
+- Filter results by one or more `site` IDs
+- Calculate hydrologic indicators:
 
-  * Mean annual flow
-  * Mean August–September flow
-  * Peak flow timing
-  * Days below EFN threshold
-  * Annual peak flow and flood quantiles (Gumbel)
-  * Weekly flow exceedance thresholds
-* Support for sub-period (e.g., pre/post intervention) comparisons
-* Built-in flood frequency analysis for return periods (e.g., Q2, Q20)
-* Exposed via RESTful API using FastAPI
+  - Mean annual flow
+  - Mean August–September flow
+  - Peak flow timing
+  - Days below EFN threshold
+  - Annual peak flow and flood quantiles (Gumbel)
+  - Weekly flow exceedance thresholds
+
+- Support for sub-period (e.g., pre/post intervention) comparisons
+- Built-in flood frequency analysis for return periods (e.g., Q2, Q20)
+- Exposed via RESTful API using FastAPI
 
 ---
 
@@ -34,7 +35,10 @@ python -m venv venv
 source venv/bin/activate  # On Windows use `venv\Scripts\activate`
 
 # Install dependencies
-pip install -r requirements.txt
+python -m pip install -e .
+
+# (Optional) Run the tests
+python -m unittest -v tests/test_indicators_with_real_data.py
 ```
 
 ### Example `requirements.txt`
@@ -77,10 +81,10 @@ Upload a Raven CSV or Parquet file and compute all indicators.
 
 #### Form Data:
 
-* `file` *(file, required)*: Raven output CSV or Parquet file.
-* `efn_threshold` *(float, optional, default=0.2)*: EFN threshold as a fraction of mean annual flow (MAF).
-* `break_point` *(int, optional)*: Water year to split into subperiods.
-* `sites` *(comma-separated list, optional)*: Filter by one or more site IDs.
+- `file` _(file, required)_: Raven output CSV or Parquet file.
+- `efn_threshold` _(float, optional, default=0.2)_: EFN threshold as a fraction of mean annual flow (MAF).
+- `break_point` _(int, optional)_: Water year to split into subperiods.
+- `sites` _(comma-separated list, optional)_: Filter by one or more site IDs.
 
 ---
 
@@ -90,10 +94,10 @@ Compute indicators from a **local file path** or **web URL**.
 
 #### Query Parameters:
 
-* `csv_path` *(str, required)*: Path or URL to Raven CSV/Parquet file.
-* `efn_threshold` *(float, optional, default=0.2)*
-* `break_point` *(int, optional)*
-* `sites` *(comma-separated string, optional)*
+- `csv_path` _(str, required)_: Path or URL to Raven CSV/Parquet file.
+- `efn_threshold` _(float, optional, default=0.2)_
+- `break_point` _(int, optional)_
+- `sites` _(comma-separated string, optional)_
 
 ---
 
@@ -101,22 +105,21 @@ Compute indicators from a **local file path** or **web URL**.
 
 Fetch **specific indicators** (optionally filtered by site):
 
-| Endpoint                     | Description                            |
-| ---------------------------- | ------------------------------------ |
-| `GET /mean-annual-flow/`     | Mean annual flow                     |
-| `GET /mean-aug-sep-flow/`    | Mean August–September flow           |
-| `GET /peak-flow-timing/`     | Average peak flow timing (day of year) |
-| `GET /days-below-efn/`       | Days below EFN threshold             |
-| `GET /peak-flows/`           | Mean annual peak flows               |
-| `GET /annual-peaks/`         | Annual peak flows per water year    |
-| `GET /fit-ffa/`              | Flood Frequency Analysis (Gumbel)   |
-| `GET /weekly-flow-exceedance/` | Weekly flow exceedance thresholds   |
-
+| Endpoint                       | Description                            |
+| ------------------------------ | -------------------------------------- |
+| `GET /mean-annual-flow/`       | Mean annual flow                       |
+| `GET /mean-aug-sep-flow/`      | Mean August–September flow             |
+| `GET /peak-flow-timing/`       | Average peak flow timing (day of year) |
+| `GET /days-below-efn/`         | Days below EFN threshold               |
+| `GET /peak-flows/`             | Mean annual peak flows                 |
+| `GET /annual-peaks/`           | Annual peak flows per water year       |
+| `GET /fit-ffa/`                | Flood Frequency Analysis (Gumbel)      |
+| `GET /weekly-flow-exceedance/` | Weekly flow exceedance thresholds      |
 
 Each accepts:
 
-* `csv_path` *(str, required)*
-* Additional params like `efn_threshold`, `sites` (comma-separated), etc.
+- `csv_path` _(str, required)_
+- Additional params like `efn_threshold`, `sites` (comma-separated), etc.
 
 ---
 
@@ -145,9 +148,9 @@ hydro-flow-indicators/
 
 Input files should contain:
 
-* `date`: datetime string (or `time`)
-* `site`: site/station ID
-* `value`: flow in m³/s
+- `date`: datetime string (or `time`)
+- `site`: site/station ID
+- `value`: flow in m³/s
 
 📝 Supported formats: CSV or Parquet
 

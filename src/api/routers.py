@@ -14,28 +14,9 @@ from src.raven_api.indicators import (
     weekly_flow_exceedance,
     fit_ffa,
 )
-indicators_router = APIRouter(prefix="/indicators", tags=["Indicators"])
 
-@indicators_router.get("/sites")
-async def list_sites(parquet_src: str):
-    """
-    List all available site names from the provided Parquet file.
-
-    Args:
-        parquet_src: Path to the Raven output Parquet file.
-
-    Returns:
-        List of site names.
-    """
-    con = duckdb.connect()
-    try:
-        sites = get_sites(con, parquet_src)
-        return {"sites": sites}
-    finally:
-        con.close()
-
-etl_router = APIRouter(prefix="/etl", tags=["ETL"])
-indicators_router = APIRouter(prefix="/indicators", tags=["Indicators"])
+etl_router = APIRouter(tags=["ETL"])
+indicators_router = APIRouter(tags=["Indicators"])
 
 
 @etl_router.post("/init")
@@ -68,7 +49,9 @@ async def get_maf(parquet_src: str, sites: Optional[List[str]] = Query(default=N
 
 
 @indicators_router.get("/mean_aug_sep_flow")
-async def get_mean_aug_sep_flow(parquet_src: str, sites: Optional[List[str]] = Query(default=None)):
+async def get_mean_aug_sep_flow(
+    parquet_src: str, sites: Optional[List[str]] = Query(default=None)
+):
     con = duckdb.connect()
     try:
         df = mean_aug_sep_flow(con, parquet_src, sites)
@@ -78,7 +61,9 @@ async def get_mean_aug_sep_flow(parquet_src: str, sites: Optional[List[str]] = Q
 
 
 @indicators_router.get("/peak_flow_timing")
-async def get_peak_flow_timing(parquet_src: str, sites: Optional[List[str]] = Query(default=None)):
+async def get_peak_flow_timing(
+    parquet_src: str, sites: Optional[List[str]] = Query(default=None)
+):
     con = duckdb.connect()
     try:
         df = peak_flow_timing(con, parquet_src, sites)
@@ -102,7 +87,9 @@ async def get_days_below_efn(
 
 
 @indicators_router.get("/annual_peaks")
-async def get_annual_peaks(parquet_src: str, sites: Optional[List[str]] = Query(default=None)):
+async def get_annual_peaks(
+    parquet_src: str, sites: Optional[List[str]] = Query(default=None)
+):
     con = duckdb.connect()
     try:
         df = annual_peaks(con, parquet_src, sites)
@@ -110,8 +97,11 @@ async def get_annual_peaks(parquet_src: str, sites: Optional[List[str]] = Query(
     finally:
         con.close()
 
+
 @indicators_router.get("/weekly_flow_exceedance")
-async def get_weekly_flow_exceedance(parquet_src: str, sites: Optional[List[str]] = Query(default=None)):
+async def get_weekly_flow_exceedance(
+    parquet_src: str, sites: Optional[List[str]] = Query(default=None)
+):
     con = duckdb.connect()
     try:
         df = weekly_flow_exceedance(con, parquet_src, sites)
@@ -121,7 +111,9 @@ async def get_weekly_flow_exceedance(parquet_src: str, sites: Optional[List[str]
 
 
 @indicators_router.get("/peak_flows")
-async def get_peak_flows(parquet_src: str, sites: Optional[List[str]] = Query(default=None)):
+async def get_peak_flows(
+    parquet_src: str, sites: Optional[List[str]] = Query(default=None)
+):
     con = duckdb.connect()
     try:
         df = peak_flows(con, parquet_src, sites)
@@ -140,7 +132,9 @@ async def get_flood_frequency_analysis(
     con = duckdb.connect()
     try:
         peaks_df = annual_peaks(con, parquet_src, sites)
-        rp_list = [int(rp.strip()) for rp in return_periods.split(",") if rp.strip().isdigit()]
+        rp_list = [
+            int(rp.strip()) for rp in return_periods.split(",") if rp.strip().isdigit()
+        ]
         ffa_df = fit_ffa(peaks_df, return_periods=rp_list)
         return ffa_df.to_dict(orient="records")
     finally:
@@ -158,4 +152,3 @@ async def list_sites(parquet_src: str):
         return df["site"].tolist()
     finally:
         con.close()
-
