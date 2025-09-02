@@ -385,19 +385,27 @@ def calculate_all_indicators(
 
             indicators = pd.concat(
                 [
-                    mean_annual_flow(con, temp_parquet_path).set_index("site"),
-                    mean_aug_sep_flow(con, temp_parquet_path).set_index("site"),
-                    peak_flow_timing(con, temp_parquet_path).set_index("site"),
-                    days_below_efn(con, temp_parquet_path, EFN_threshold).set_index(
+                    mean_annual_flow(con, temp_parquet_path, sites=sites).set_index(
                         "site"
                     ),
-                    peak_flows(con, temp_parquet_path).set_index("site"),
+                    mean_aug_sep_flow(con, temp_parquet_path, sites=sites).set_index(
+                        "site"
+                    ),
+                    peak_flow_timing(con, temp_parquet_path, sites=sites).set_index(
+                        "site"
+                    ),
+                    days_below_efn(
+                        con, temp_parquet_path, EFN_threshold, sites=sites
+                    ).set_index("site"),
+                    peak_flows(con, temp_parquet_path, sites=sites).set_index("site"),
                 ],
                 axis=1,
             )
 
-            peaks_df = annual_peaks(con, temp_parquet_path)
-            ffa = fit_ffa(peaks_df, return_periods=[2, 20]).set_index("site")
+            peaks_df = annual_peaks(con, temp_parquet_path, sites=sites)
+            ffa = fit_ffa(peaks_df, return_periods=[2, 20], sites=sites).set_index(
+                "site"
+            )
 
             all_indicators = indicators.join(ffa, how="left")
             all_indicators["subperiod"] = period
