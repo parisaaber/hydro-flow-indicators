@@ -26,4 +26,8 @@ app.add_middleware(
 )
 
 app.include_router(etl_router, prefix="/etl", tags=["ETL"])
-app.include_router(indicators_router, prefix="/indicators", tags=["Indicators"])
+app.include_router(
+    indicators_router,
+    prefix="/indicators",
+    tags=["Indicators"]
+)
