@@ -2,7 +2,7 @@ from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, Query
 import duckdb
-
+from fastapi import Depends
 from src.raven_api.etl import init_etl
 from src.raven_api.indicators import (
     calculate_all_indicators,
@@ -372,3 +372,4 @@ async def list_sites(
         return df["site"].tolist()
     finally:
         con.close()
+

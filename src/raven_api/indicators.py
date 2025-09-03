@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from typing import Optional, List, Dict, Tuple
 import pandas as pd
 import numpy as np
@@ -11,6 +11,38 @@ from scipy.stats import (
 
 
 app = FastAPI(title="Raven API", version="0.1")
+
+
+def common_query_params(
+    parquet_src: str = Query(..., description="Full path to Parquet"),
+    sites: Optional[List[str]] = Query(
+        None, description="List of site IDs", example=["sub11004314 [m3/s]"]
+        ),
+    start_date: Optional[str] = Query(
+        None, description="YYYY-MM-DD"
+        ),
+    end_date: Optional[str] = Query(
+        None, description="YYYY-MM-DD"
+        ),
+    temporal_resolution: str = Query(
+        "overall", description="overall|annual|daily|weekly"
+        ),
+    efn_threshold: float = Query(
+        0.2, description="EFN threshold fraction"
+        ),
+    break_point: Optional[int] = Query(
+        None, description="Water year to split subperiods"
+        ),
+):
+    return {
+        "parquet_src": parquet_src,
+        "sites": sites,
+        "start_date": start_date,
+        "end_date": end_date,
+        "temporal_resolution": temporal_resolution,
+        "efn_threshold": efn_threshold,
+        "break_point": break_point,
+    }
 
 
 def mean_annual_flow(
@@ -163,7 +195,7 @@ def peak_flow_timing(
     else:
         query = f"""
             WITH ranked_flows AS (
-                SELECT site, water_year, value, 
+                SELECT site, water_year, value,
                 EXTRACT(doy FROM date) AS doy,
                 ROW_NUMBER() OVER (PARTITION BY site,
                 water_year ORDER BY value DESC) AS rn
