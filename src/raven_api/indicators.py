@@ -4,8 +4,6 @@ import pandas as pd
 import numpy as np
 import duckdb
 from scipy.stats import gumbel_r
-import tempfile
-import os
 
 app = FastAPI(title="Raven API", version="0.1")
 

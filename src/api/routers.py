@@ -9,7 +9,6 @@ from src.raven_api.indicators import (
     days_below_efn,
     fit_ffa,
     annual_peaks,
-    hydrograph,
     mean_aug_sep_flow,
     mean_annual_flow,
     peak_flow_timing,
