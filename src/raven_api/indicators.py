@@ -4,10 +4,28 @@ import pandas as pd
 import numpy as np
 import duckdb
 from scipy.stats import gumbel_r
-
+import tempfile
+import os
 
 app = FastAPI(title="Raven API", version="0.1")
-
+def common_query_params(
+    parquet_src: str = Query(..., description="Full path to Parquet"),
+    sites: Optional[List[str]] = Query(None, description="List of site IDs", example=["sub11004314 [m3/s]"]),
+    start_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    temporal_resolution: str = Query("overall", description="overall|annual|daily|weekly"),
+    efn_threshold: float = Query(0.2, description="EFN threshold fraction"),
+    break_point: Optional[int] = Query(None, description="Water year to split subperiods"),
+):
+    return {
+        "parquet_src": parquet_src,
+        "sites": sites,
+        "start_date": start_date,
+        "end_date": end_date,
+        "temporal_resolution": temporal_resolution,
+        "efn_threshold": efn_threshold,
+        "break_point": break_point,
+    }
 
 def mean_annual_flow(
     con: duckdb.DuckDBPyConnection,
@@ -584,64 +602,3 @@ def calculate_all_indicators(
     except Exception as e:
         raise RuntimeError(f"Error in calculating indicators: {e}")
 
-
-def hydrograph(
-    con: duckdb.DuckDBPyConnection,
-    parquet_path: str,
-    sites: Optional[List[str]] = None,
-    start_date: Optional[str] = None,  # Format: "YYYY-MM-DD"
-    end_date: Optional[str] = None,    # Format: "YYYY-MM-DD"
-    temporal_resolution: str = "daily"  # "weekly","monthly", "seasonal"
-) -> pd.DataFrame:
-
-    sites_filter = ""
-    if sites:
-        sites_tuple = tuple(sites)
-        sites_filter = f"AND site IN {sites_tuple}"
-
-    date_filter = ""
-    if start_date and end_date:
-        date_filter = f"AND date BETWEEN '{start_date}' AND '{end_date}'"
-
-    if temporal_resolution == "daily":
-        group_expr = "date"
-    elif temporal_resolution == "weekly":
-        group_expr = "strftime('%Y-%W', date)"
-    elif temporal_resolution == "monthly":
-        group_expr = "strftime('%Y-%m', date)"
-    elif temporal_resolution == "seasonal":
-        # Define season as "YYYY-Season"
-        group_expr = """
-            strftime('%Y', date) || '-' ||
-            CASE
-                WHEN CAST(strftime('%m', date) AS INTEGER)
-                IN (12, 1, 2) THEN 'Winter'
-                WHEN CAST(strftime('%m', date) AS INTEGER)
-                BETWEEN 3 AND 5 THEN 'Spring'
-                WHEN CAST(strftime('%m', date) AS INTEGER)
-                BETWEEN 6 AND 8 THEN 'Summer'
-                WHEN CAST(strftime('%m', date) AS INTEGER)
-                BETWEEN 9 AND 11 THEN 'Fall'
-            END
-        """
-    else:
-        raise ValueError(
-            "Invalid temporal_resolution: choose from"
-            "daily, weekly, monthly, seasonal"
-                        )
-
-    query = f"""
-        SELECT
-            site,
-            {group_expr} AS period,
-            AVG(value) AS mean_flow
-        FROM parquet_scan('{parquet_path}')
-        WHERE 1=1
-        {sites_filter}
-        {date_filter}
-        GROUP BY site, period
-        ORDER BY site, period
-    """
-
-    df = con.execute(query).fetchdf()
-    return df.rename(columns={"period": "time_period"})
