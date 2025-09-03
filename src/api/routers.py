@@ -9,7 +9,7 @@ from src.raven_api.indicators import (
     days_below_efn,
     fit_ffa,
     annual_peaks,
-    hydrograph,
+    aggregate_flows,
     mean_aug_sep_flow,
     mean_annual_flow,
     peak_flow_timing,
@@ -265,8 +265,37 @@ async def get_flood_frequency_analysis(
         description="Comma-separated list of return periods (e.g., '2,20,50')",
         example="2,20"
     ),
+    dist: str = Query(
+        default="auto",
+        description="Distribution to fit "
+        "( 'genextreme' , 'logpearson3' , 'lognormal' , "
+        "'gumbel', 'gamma' , 'normal', or 'auto' for best-fit)"
+    ),
+    remove_outliers: bool = Query(
+        default=False,
+        description="Whether to remove outliers before fitting"
+    ),
+    outlier_method: str = Query(
+        default="iqr",
+        description="Outlier detection method "
+        "('iqr', 'zscore', 'modified_zscore')"
+    ),
+    outlier_threshold: float = Query(
+        default=1.5,
+        description="Suggested thresholds for outlier detection: "
+        "IQR=1.5 (mild outlier), Z-score=3, Modified Z-score=3.5"
+    ),
+    min_years: int = Query(
+        default=5,
+        description="Minimum number of years required for analysis"
+    ),
+    selection_criteria: str = Query(
+        default="aic",
+        description="Criteria for selecting best distribution"
+        "('aic', 'bic', 'ks', 'rmse')"
+    ),
 ):
-    """Fit Flood Frequency Analysis (FFA) using Gumbel distribution."""
+    """Fit Flood Frequency Analysis (FFA) using enhanced fit_ffa function."""
     con = duckdb.connect()
     try:
         peaks_df = annual_peaks(
@@ -276,21 +305,29 @@ async def get_flood_frequency_analysis(
             start_date=commons["start_date"],
             end_date=commons["end_date"],
         )
-        rp_list = [
-            int(rp.strip()) for rp in return_periods.split(",")
-            if rp.strip().isdigit()]
+
+        rp_list = [int(
+            rp.strip()
+        ) for rp in return_periods.split(",") if rp.strip().isdigit()]
+
         ffa_df = fit_ffa(
             peaks_df,
+            dist=dist,
             return_periods=rp_list,
-            sites=commons["sites"]
+            sites=commons["sites"],
+            remove_outliers=remove_outliers,
+            outlier_method=outlier_method,
+            outlier_threshold=outlier_threshold,
+            selection_criteria=selection_criteria,
+            min_years=min_years
         )
         return ffa_df.to_dict(orient="records")
     finally:
         con.close()
 
 
-@indicators_router.get("/hydrograph")
-async def get_hydrograph(
+@indicators_router.get("/aggregate_flows")
+async def get_aggregate_flows(
     commons: CommonsDep,
     temporal_resolution: str = Query(
         "daily",
@@ -304,7 +341,7 @@ async def get_hydrograph(
     """
     con = duckdb.connect()
     try:
-        df = hydrograph(
+        df = aggregate_flows(
             con,
             parquet_path=commons["parquet_src"],
             sites=commons["sites"],
@@ -318,13 +355,18 @@ async def get_hydrograph(
 
 
 @indicators_router.get("/sites")
-async def list_sites(commons: CommonsDep):
+async def list_sites(
+    parquet_src: str = Query(
+        ...,
+        description="Full local or remote path to a Parquet file.",
+    )
+):
     """List all available site names from the Parquet file."""
     con = get_conn()
     try:
         df = con.execute(
-            f"SELECT DISTINCT site FROM"
-            f"parquet_scan('{commons['parquet_src']}') "
+            "SELECT DISTINCT site "
+            f"FROM '{parquet_src}' "
             "ORDER BY site"
         ).fetchdf()
         return df["site"].tolist()

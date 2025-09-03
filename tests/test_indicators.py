@@ -42,8 +42,9 @@ class TestIndicatorsWithRealData(unittest.TestCase):
         df_raw = df_raw[numeric_cols]
 
         # Convert wide to long format
-        df_long = df_raw.melt(id_vars=["date"], var_name="site",
-                              value_name="value")
+        df_long = df_raw.melt(
+            id_vars=["date"], var_name="site", value_name="value"
+        )
 
         # Keep numeric values only
         df_long = df_long[pd.to_numeric(df_long["value"],
@@ -97,13 +98,24 @@ class TestIndicatorsWithRealData(unittest.TestCase):
         self.assertFalse(df.empty)
         self.assertIn("mean_annual_peak", df.columns)
 
-    def test_annual_peaks_and_fit_ffa(self):
+    def test_fit_ffa(self):
+        # Run fit_ffa on your test data
         peaks_df = annual_peaks(self.con, self.parquet_path)
-        self.assertFalse(peaks_df.empty)
-        self.assertIn("annual_peak", peaks_df.columns)
+        ffa_df = fit_ffa(
+            peaks_df,
+            dist="auto",
+            return_periods=[2, 20],
+            remove_outliers=False,
+            debug=False
+        )
 
-        ffa_df = fit_ffa(peaks_df, return_periods=[2, 20])
+        # Check that the returned DataFrame is not empty
         self.assertFalse(ffa_df.empty)
+
+        # Check that essential columns exist
+        self.assertIn("site", ffa_df.columns)
+        self.assertIn("best_distribution", ffa_df.columns)
+        self.assertIn("outliers_removed", ffa_df.columns)
         self.assertIn("Q2", ffa_df.columns)
         self.assertIn("Q20", ffa_df.columns)
 
