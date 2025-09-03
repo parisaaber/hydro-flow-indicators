@@ -283,41 +283,13 @@ async def get_flood_frequency_analysis(
         con.close()
 
 
-@indicators_router.get("/hydrograph")
-async def get_hydrograph(
-    commons: CommonsDep,
-    temporal_resolution: str = Query(
-        "daily",
-        description="Temporal resolution of the hydrograph."
-        "Choose from: 'daily', 'weekly', 'monthly', 'seasonal'.",
-    ),
-):
-    """
-    Return a hydrograph (time series of flow) for the specified site(s),"
-    "with optional time range filtering and temporal aggregation.
-    """
-    con = duckdb.connect()
-    try:
-        df = hydrograph(
-            con,
-            parquet_path=commons["parquet_src"],
-            sites=commons["sites"],
-            start_date=commons["start_date"],
-            end_date=commons["end_date"],
-            temporal_resolution=temporal_resolution,
-        )
-        return df.to_dict(orient="records")
-    finally:
-        con.close()
-
-
 @indicators_router.get("/sites")
 async def list_sites(commons: CommonsDep):
     """List all available site names from the Parquet file."""
     con = get_conn()
     try:
         df = con.execute(
-            f"SELECT DISTINCT site FROM"
+            f"SELECT DISTINCT site FROM "
             f"parquet_scan('{commons['parquet_src']}') "
             "ORDER BY site"
         ).fetchdf()

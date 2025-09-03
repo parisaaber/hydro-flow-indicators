@@ -15,9 +15,7 @@ def common_query_params(
     ),
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
-    temporal_resolution: str = Query(
-        "overall", description="overall|annual|daily|weekly"
-    ),
+    temporal_resolution: str = Query("overall", description="overall|annual"),
     efn_threshold: float = Query(0.2, description="EFN threshold fraction"),
     break_point: Optional[int] = Query(
         None, description="Water year to split subperiods"
