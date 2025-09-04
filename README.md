@@ -39,6 +39,10 @@ python -m pip install -e .
 
 # (Optional) Run the tests
 python -m unittest -v tests/test_indicators_with_real_data.py
+
+# Once done, deactivate and remove the virtual environment
+deactivate
+rm -rf venv
 ```
 
 ### Example `requirements.txt`

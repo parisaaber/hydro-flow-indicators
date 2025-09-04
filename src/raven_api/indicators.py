@@ -177,7 +177,7 @@ def peak_flow_timing(
                 water_year ORDER BY value DESC) AS peak_doy
                 FROM daily
             )
-            SELECT site, water_year, peak_doy
+            SELECT site, water_year, peak_doy AS peak_flow_timing
             FROM peaks
             GROUP BY site, water_year, peak_doy
             ORDER BY site, water_year
