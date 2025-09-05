@@ -55,6 +55,9 @@ numpy
 duckdb
 scipy
 requests
+geopandas
+pyproj
+shapely
 ```
 
 ---

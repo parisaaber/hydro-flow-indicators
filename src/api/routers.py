@@ -15,9 +15,11 @@ from src.raven_api.indicators import (
     peak_flows,
     weekly_flow_exceedance,
 )
+from src.raven_api.mapping import map_features
 
 etl_router = APIRouter(tags=["ETL"])
 indicators_router = APIRouter(tags=["Indicators"])
+mapping_router = APIRouter(tags=["Mapping"])
 
 
 @etl_router.post(
@@ -296,3 +298,18 @@ async def list_sites(commons: CommonsDep):
         return df["site"].tolist()
     finally:
         con.close()
+
+
+@mapping_router.get("/")
+async def get_features(
+    geoparquet_src: str = Query(
+        ...,
+        description="Full local or remote path to a Parquet file.",
+    ),
+    sites: Optional[List[str]] = Query(
+        default=None,
+        description="List of site IDs.",
+        example=["sub11004314 [m3/s]"],
+    ),
+):
+    return map_features(geoparquet_src, sites)

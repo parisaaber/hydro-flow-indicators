@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from src.api.routers import etl_router, indicators_router
+from src.api.routers import etl_router, indicators_router, mapping_router
 from src.api import __version__ as VERSION
 
 
@@ -26,8 +26,5 @@ app.add_middleware(
 )
 
 app.include_router(etl_router, prefix="/etl", tags=["ETL"])
-app.include_router(
-    indicators_router,
-    prefix="/indicators",
-    tags=["Indicators"]
-)
+app.include_router(indicators_router, prefix="/indicators", tags=["Indicators"])
+app.include_router(mapping_router, prefix="/mapping", tags=["Mapping"])

@@ -1,11 +1,9 @@
-from fastapi import FastAPI, Query
+from fastapi import Query
 from typing import Optional, List
 import pandas as pd
 import numpy as np
 import duckdb
 from scipy.stats import gumbel_r
-
-app = FastAPI(title="Raven API", version="0.1")
 
 
 def common_query_params(
