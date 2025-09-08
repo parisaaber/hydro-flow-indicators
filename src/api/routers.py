@@ -25,8 +25,10 @@ mapping_router = APIRouter(tags=["Mapping"])
 @etl_router.post(
     "/init", description="Initialize the ETL process for a Raven output CSV."
 )
-async def initialize_etl(csv_path: str, output_path: str):
-    init_etl(csv_path, output_path)
+async def initialize_etl(
+    csv_path: str, output_path: str, spatial_path: str = None, join_column: str = None
+):
+    init_etl(csv_path, output_path, spatial_path, join_column)
 
 
 def common_parameters(
@@ -300,7 +302,7 @@ async def list_sites(commons: CommonsDep):
         con.close()
 
 
-@mapping_router.get("/")
+@mapping_router.get("/features")
 async def get_features(
     geoparquet_src: str = Query(
         ...,

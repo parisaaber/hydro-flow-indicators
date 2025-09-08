@@ -40,16 +40,18 @@ def _localize_if_remote(geoparquet_src: str) -> Iterator[str]:
 
 def _to_feature_collection(gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
     props_df = gdf.drop(columns=gdf.geometry.name)
-    props_df = props_df.applymap(
-        lambda v: (
-            v.isoformat()
-            if isinstance(v, pd.Timestamp)
-            else (v.item() if hasattr(v, "item") else v)
+    props_df = props_df.apply(
+        lambda col: col.map(
+            lambda v: (
+                v.isoformat()
+                if isinstance(v, pd.Timestamp)
+                else (v.item() if hasattr(v, "item") else v)
+            )
         )
     )
 
     features: List[Dict[str, Any]] = []
-    for (idx, row), geom in zip(props_df.iterrows(), gdf.geometry):
+    for (_, row), geom in zip(props_df.iterrows(), gdf.geometry):
         features.append(
             {
                 "type": "Feature",
