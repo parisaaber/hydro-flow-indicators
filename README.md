@@ -58,6 +58,7 @@ requests
 geopandas
 pyproj
 shapely
+boto3
 ```
 
 ---

@@ -1,11 +1,66 @@
 import os
+import re
 from tempfile import TemporaryDirectory, _get_candidate_names
 from urllib.parse import urlsplit, urlunsplit
 import requests
+import boto3
 import pandas as pd
 import duckdb
 import numpy as np
 import geopandas as gpd
+
+_S3_HTTPS_URL_REGEX = re.compile(
+    r"^(?P<bucket>[^.]+)\.(?:s3(?:[.-][a-z0-9-]+)?|s3-accelerate)\.amazonaws\.com$"
+)
+
+
+def _split_url(url: str):
+    p = urlsplit(url)
+    return p.scheme.lower(), p.netloc, p.path.lstrip("/"), p
+
+
+def _is_remote(url_or_path: str) -> bool:
+    scheme, *_ = _split_url(url_or_path)
+    return scheme in ("http", "https", "s3")
+
+
+def _normalize_s3_url(url: str) -> str | None:
+    """
+    Normalize S3 URLs (s3:// or S3 HTTPS) into s3://bucket/key form.
+    Returns None if not S3.
+    """
+    p = urlsplit(url)
+    scheme = p.scheme.lower()
+
+    # s3://bucket/key
+    if scheme == "s3":
+        return url
+
+    # S3-style HTTPS
+    parsed = _try_parse_s3_https(url)
+    if parsed:
+        bucket, key = parsed
+        return f"s3://{bucket}/{key}"
+
+    return None
+
+
+def _try_parse_s3_https(url: str):
+    """Return (bucket, key) if url is an S3 HTTPS object URL, else None."""
+    p = urlsplit(url)
+    if p.scheme.lower() != "https":
+        return None
+    m = _S3_HTTPS_URL_REGEX.match(p.netloc)
+    if m:
+        # path-style: https://{bucket}.s3.{region}.amazonaws.com/{key}
+        return m.group("bucket"), p.path.lstrip("/")
+    # path-style: https://s3.{region}.amazonaws.com/{bucket}/{key}
+    if p.netloc.startswith("s3.") and p.netloc.endswith(".amazonaws.com"):
+        path = p.path.lstrip("/")
+        if "/" in path:
+            bucket, key = path.split("/", 1)
+            return bucket, key
+    return None
 
 
 def init_etl(
@@ -25,18 +80,15 @@ def init_etl(
         join_column: Optional name of the column referring to the sites for spatial joins.
     """
     with TemporaryDirectory() as tmp_dir:
-        # Check if the input csv is remote or local
         if not os.path.exists(csv_src):
             csv_dst = os.path.join(tmp_dir, f"{next(_get_candidate_names())}.csv")
             collect_remote(csv_src, csv_dst)
             csv_src = csv_dst
 
-        # Prepare data
         df = load_raven_output(csv_src)
         long_df = reshape_to_long(df)
 
-        # Check if the output is remote or local
-        output_is_remote = output_path.lower().startswith("http")
+        output_is_remote = _is_remote(output_path)
         parquet_dst = (
             os.path.join(tmp_dir, f"{next(_get_candidate_names())}.parquet")
             if output_is_remote
@@ -49,10 +101,12 @@ def init_etl(
             upload_to_remote(parquet_dst, output_path)
 
         if spatial_path and join_column:
+            expected_sites = long_df["site"].dropna().astype(str).unique().tolist()
             export_spatial_to_geoparquet(
                 spatial_path=spatial_path,
                 join_column=join_column,
                 output_path=output_path,
+                expected_sites=expected_sites,
             )
 
 
@@ -64,24 +118,54 @@ def collect_remote(url: str, local_path: str) -> None:
         url: URL of the remote CSV file.
         local_path: Local path to save the downloaded file.
     """
-    response = requests.get(url)
-    response.raise_for_status()
-
+    scheme, netloc, path, _ = _split_url(url)
+    if scheme == "s3":
+        boto3.client("s3").download_file(netloc, path, local_path)
+        return
+    r = requests.get(url)
+    r.raise_for_status()
     with open(local_path, "wb") as f:
-        f.write(response.content)
+        f.write(r.content)
 
 
 def upload_to_remote(local_path: str, remote_url: str) -> None:
-    """
-    Upload a local file to a remote URL.
+    # normalize to s3:// if possible
+    s3_url = _normalize_s3_url(remote_url)
+    if s3_url:
+        scheme, bucket, key, _ = _split_url(s3_url)
+        boto3.client("s3").upload_file(local_path, bucket, key)
+        return
 
-    Args:
-        local_path: Path to the local file to upload.
-        remote_url: URL to upload the file to.
+    # otherwise assume presigned PUT (true generic HTTPS)
+    scheme, *_ = _split_url(remote_url)
+    if scheme in ("http", "https"):
+        with open(local_path, "rb") as f:
+            r = requests.put(remote_url, data=f)
+            r.raise_for_status()
+        return
+
+    raise ValueError(f"Unsupported remote scheme '{scheme}' for {remote_url}")
+
+
+def _sibling_remote(output_path: str, out_name: str) -> str:
     """
-    with open(local_path, "rb") as f:
-        response = requests.put(remote_url, data=f)
-        response.raise_for_status()
+    Return sibling path next to output_path.
+    Normalizes S3-style URLs → s3://bucket/key.
+    """
+    s3_url = _normalize_s3_url(output_path)
+    if s3_url:
+        scheme, bucket, key, _ = _split_url(s3_url)
+        segs = key.rstrip("/").split("/")
+        if segs:
+            segs[-1] = out_name
+        return f"s3://{bucket}/" + "/".join(segs)
+
+    # fallback for true generic http(s)
+    p = urlsplit(output_path)
+    segs = p.path.rstrip("/").split("/")
+    if segs:
+        segs[-1] = out_name
+    return urlunsplit((p.scheme, p.netloc, "/".join(segs), p.query, p.fragment))
 
 
 def load_raven_output(csv_path: str) -> pd.DataFrame:
@@ -193,6 +277,7 @@ def export_spatial_to_geoparquet(
     spatial_path: str,
     join_column: str,
     output_path: str,
+    expected_sites: list[str] | None = None,
 ) -> str:
     """
     Read a spatial file and write a GeoParquet next to the ETL output.
@@ -224,27 +309,27 @@ def export_spatial_to_geoparquet(
             )
         gdf = gdf.rename(columns={join_column: "site"})
 
+    if expected_sites is not None:
+        spatial_sites = set(gdf["site"].dropna().astype(str))
+        expected_sites_set = set(map(str, expected_sites))
+        if not (spatial_sites & expected_sites_set):
+            raise ValueError(
+                "No matching site values found between spatial data and timeseries. "
+                f"Example spatial sites: {list(spatial_sites)[:10]} ; "
+                f"example expected sites: {list(expected_sites_set)[:10]}"
+            )
+
     base = os.path.splitext(os.path.basename(spatial_path))[0]
     out_name = f"{base}.parquet"
-    output_is_remote = output_path.lower().startswith(("http://", "https://"))
 
-    if not output_is_remote:
+    if not _is_remote(output_path):
         out_dir = os.path.dirname(os.path.abspath(output_path))
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, out_name)
         gdf.to_parquet(out_path, index=False)
         return out_path
 
-    # Replace the last segment of the output_path with out_name
-    parts = urlsplit(output_path)
-    path_segments = parts.path.rstrip("/").split("/")
-    if path_segments:
-        path_segments[-1] = out_name
-    new_path = "/".join(path_segments)
-    remote_url = urlunsplit(
-        (parts.scheme, parts.netloc, new_path, parts.query, parts.fragment)
-    )
-
+    remote_url = _sibling_remote(output_path, out_name)
     with TemporaryDirectory() as tmp_dir:
         tmp_parquet = os.path.join(tmp_dir, out_name)
         gdf.to_parquet(tmp_parquet, index=False)
