@@ -1,7 +1,6 @@
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List
 import pandas as pd
 import numpy as np
-import scipy.stats as stats
 import duckdb
 import warnings
 from .utils import (
@@ -691,7 +690,7 @@ def calculate_all_indicators(
             if period == "full_period":
                 sub_start = start_date
                 sub_end = end_date
-            else:
+            elif break_point is not None:
                 if "before" in period:
                     sub_start = start_date
                     sub_end = f"{break_point}-09-30"

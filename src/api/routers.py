@@ -1,10 +1,8 @@
 from typing import Annotated, List, Optional
-
 from fastapi import APIRouter, Depends, Query
 import duckdb
-from fastapi import Depends
-from src.raven_api.etl import init_etl
-from src.raven_api.indicators import (
+from ..raven_api.etl import init_etl
+from ..raven_api.indicators import (
     calculate_all_indicators,
     days_below_efn,
     fit_ffa,
@@ -372,4 +370,3 @@ async def list_sites(
         return df["site"].tolist()
     finally:
         con.close()
-
