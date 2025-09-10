@@ -8,6 +8,8 @@ import pandas as pd
 import duckdb
 import numpy as np
 import geopandas as gpd
+import io, gzip
+from pyproj import CRS
 
 _S3_HTTPS_URL_REGEX = re.compile(
     r"^(?P<bucket>[^.]+)\.(?:s3(?:[.-][a-z0-9-]+)?|s3-accelerate)\.amazonaws\.com$"
@@ -285,8 +287,6 @@ def export_spatial_to_geojson_gz(
     The join_column in the written file is normalized to 'site'.
     Returns the local path (for local outputs) or the remote URL (for remote outputs).
     """
-    import io, gzip
-    from pyproj import CRS
 
     gdf = gpd.read_file(spatial_path)
 

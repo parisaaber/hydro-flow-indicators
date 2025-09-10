@@ -45,7 +45,7 @@ def _stream_s3(url: str):
     # url like s3://bucket/key
     _, bucket, key, _ = _split_url_like(url)
     obj = boto3.client("s3").get_object(Bucket=bucket, Key=key)
-    body = obj["Body"]  # botocore.response.StreamingBody
+    body = obj["Body"]
     for chunk in body.iter_chunks(CHUNK):
         if chunk:
             yield chunk
@@ -54,11 +54,6 @@ def _stream_s3(url: str):
 def map_features(
     geojson_src: str,
 ):
-    """
-    Pass-through stream of prebuilt GeoJSON(.gz).
-    - If the path ends with .gz, sets Content-Encoding: gzip.
-    """
-    # Choose the iterator based on scheme
     if not _is_remote(geojson_src):
         iterator = _stream_local(geojson_src)
     else:
