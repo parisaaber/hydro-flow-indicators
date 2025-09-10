@@ -1,95 +1,78 @@
 from __future__ import annotations
-from typing import Iterable, Optional, Dict, Any, List, Iterator
-import os
 import requests
+import boto3
 from urllib.parse import urlsplit
-from contextlib import contextmanager
-from tempfile import TemporaryDirectory
-import geopandas as gpd
-import pandas as pd
-from shapely.geometry import mapping as shapely_mapping
-from pyproj import CRS
+from fastapi.responses import StreamingResponse, Response
+
+CHUNK = 1024 * 1024  # 1 MiB
 
 
 def _is_remote(path: str) -> bool:
-    return path.lower().startswith(("http://", "https://"))
+    p = path.lower()
+    return p.startswith(("http://", "https://", "s3://"))
 
 
-@contextmanager
-def _localize_if_remote(geoparquet_src: str) -> Iterator[str]:
-    if not _is_remote(geoparquet_src):
-        yield geoparquet_src
-        return
+def _is_gz(path: str) -> bool:
+    return path.lower().endswith(".gz")
 
-    tmp_dir = TemporaryDirectory()
+
+def _split_url_like(url: str):
+    p = urlsplit(url)
+    return p.scheme.lower(), p.netloc, p.path.lstrip("/"), p
+
+
+def _stream_local(path: str):
+    f = open(path, "rb")
     try:
-        filename = os.path.basename(urlsplit(geoparquet_src).path) or "features.parquet"
-        local_path = os.path.join(tmp_dir.name, filename)
-
-        with requests.get(geoparquet_src, stream=True, timeout=30) as resp:
-            resp.raise_for_status()
-            with open(local_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=1_048_576):
-                    if chunk:
-                        f.write(chunk)
-
-        yield local_path
+        while True:
+            chunk = f.read(CHUNK)
+            if not chunk:
+                break
+            yield chunk
     finally:
-        tmp_dir.cleanup()
+        f.close()
 
 
-def _to_feature_collection(gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
-    props_df = gdf.drop(columns=gdf.geometry.name)
-    props_df = props_df.apply(
-        lambda col: col.map(
-            lambda v: (
-                v.isoformat()
-                if isinstance(v, pd.Timestamp)
-                else (v.item() if hasattr(v, "item") else v)
-            )
-        )
-    )
+def _stream_http(url: str):
+    with requests.get(url, stream=True, timeout=30) as r:
+        r.raise_for_status()
+        for chunk in r.iter_content(chunk_size=CHUNK):
+            if chunk:
+                yield chunk
 
-    features: List[Dict[str, Any]] = []
-    for (_, row), geom in zip(props_df.iterrows(), gdf.geometry):
-        features.append(
-            {
-                "type": "Feature",
-                "properties": row.to_dict(),
-                "geometry": shapely_mapping(geom) if geom is not None else None,
-            }
-        )
 
-    return {"type": "FeatureCollection", "features": features}
+def _stream_s3(url: str):
+    # url like s3://bucket/key
+    _, bucket, key, _ = _split_url_like(url)
+    obj = boto3.client("s3").get_object(Bucket=bucket, Key=key)
+    body = obj["Body"]  # botocore.response.StreamingBody
+    for chunk in body.iter_chunks(CHUNK):
+        if chunk:
+            yield chunk
 
 
 def map_features(
-    geoparquet_src: str,
-    sites: Optional[Iterable[str]] = None,
-) -> Dict[str, Any]:
-    with _localize_if_remote(geoparquet_src) as local_path:
-        gdf = gpd.read_parquet(local_path)
+    geojson_src: str,
+):
+    """
+    Pass-through stream of prebuilt GeoJSON(.gz).
+    - If the path ends with .gz, sets Content-Encoding: gzip.
+    """
+    # Choose the iterator based on scheme
+    if not _is_remote(geojson_src):
+        iterator = _stream_local(geojson_src)
+    else:
+        scheme, *_ = _split_url_like(geojson_src)
+        if scheme == "s3":
+            iterator = _stream_s3(geojson_src)
+        elif scheme in ("http", "https"):
+            iterator = _stream_http(geojson_src)
+        else:
+            return Response(status_code=400, content=f"Unsupported scheme: {scheme}")
 
-    if "site" not in gdf.columns:
-        raise ValueError(
-            "GeoParquet must contain a 'site' column (renamed during export)."
-        )
-    if gdf.geometry.name is None:
-        raise ValueError("GeoParquet is missing a geometry column.")
+    headers = {}
+    media_type = "application/json"
+    if _is_gz(geojson_src):
+        headers["Content-Encoding"] = "gzip"
 
-    if sites:
-        gdf = gdf[gdf["site"].isin(list(sites))]
-
-    if gdf.empty:
-        return {"type": "FeatureCollection", "features": []}
-
-    if gdf.crs is not None:
-        crs_4326 = CRS.from_epsg(4326)
-        try:
-            if not CRS.from_user_input(gdf.crs).equals(crs_4326):
-                gdf = gdf.to_crs(crs_4326)
-        except Exception:
-            # if CRS is unparsable, assume it's already 4326
-            pass
-
-    return _to_feature_collection(gdf)
+    return StreamingResponse(iterator, media_type=media_type, headers=headers)

@@ -102,7 +102,7 @@ def init_etl(
 
         if spatial_path and join_column:
             expected_sites = long_df["site"].dropna().astype(str).unique().tolist()
-            export_spatial_to_geoparquet(
+            export_spatial_to_geojson_gz(
                 spatial_path=spatial_path,
                 join_column=join_column,
                 output_path=output_path,
@@ -273,25 +273,21 @@ def assign_subperiods(df: pd.DataFrame, break_point: int | None) -> pd.DataFrame
     return df
 
 
-def export_spatial_to_geoparquet(
+def export_spatial_to_geojson_gz(
     spatial_path: str,
     join_column: str,
     output_path: str,
     expected_sites: list[str] | None = None,
 ) -> str:
     """
-    Read a spatial file and write a GeoParquet next to the ETL output.
+    Read a spatial file and write a gzipped GeoJSON next to the ETL output.
 
-    The join_column in the written parquet is normalized to 'site'.
-
-    Args:
-        spatial_path: Path to the spatial vector file (e.g., .gpkg, .shp, .geojson).
-        join_column: Name of the column of the sites for spatial joins.
-        output_path: The CSV timeseries output path/URL used to determine sibling location.
-
-    Returns:
-        The local full path (for local outputs) or the remote URL (for remote outputs).
+    The join_column in the written file is normalized to 'site'.
+    Returns the local path (for local outputs) or the remote URL (for remote outputs).
     """
+    import io, gzip
+    from pyproj import CRS
+
     gdf = gpd.read_file(spatial_path)
 
     if join_column not in gdf.columns:
@@ -300,7 +296,6 @@ def export_spatial_to_geoparquet(
             f"Available columns: {list(gdf.columns)}"
         )
 
-    # Normalize join column name to 'site', used by the CSV timeseries.
     if join_column != "site":
         if "site" in gdf.columns:
             raise ValueError(
@@ -319,19 +314,58 @@ def export_spatial_to_geoparquet(
                 f"example expected sites: {list(expected_sites_set)[:10]}"
             )
 
+    if gdf.crs is not None:
+        try:
+            if not CRS.from_user_input(gdf.crs).equals(CRS.from_epsg(4326)):
+                gdf = gdf.to_crs(4326)
+        except Exception:
+            pass
+
+    geojson_text = gdf.to_json(drop_id=True)
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
+        gz.write(geojson_text.encode("utf-8"))
+    gz_bytes = buf.getvalue()
+
     base = os.path.splitext(os.path.basename(spatial_path))[0]
-    out_name = f"{base}.parquet"
+    out_name = f"{base}.geojson.gz"
 
     if not _is_remote(output_path):
         out_dir = os.path.dirname(os.path.abspath(output_path))
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, out_name)
-        gdf.to_parquet(out_path, index=False)
+        with open(out_path, "wb") as f:
+            f.write(gz_bytes)
         return out_path
 
+    # remote sibling
     remote_url = _sibling_remote(output_path, out_name)
-    with TemporaryDirectory() as tmp_dir:
-        tmp_parquet = os.path.join(tmp_dir, out_name)
-        gdf.to_parquet(tmp_parquet, index=False)
-        upload_to_remote(tmp_parquet, remote_url)
+
+    # If S3, set the metadata so browsers auto-decompress
+    s3_url = _normalize_s3_url(remote_url)
+    if s3_url:
+        _, bucket, key, _ = _split_url(s3_url)
+        boto3.client("s3").put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=gz_bytes,
+            ContentType="application/json",
+            ContentEncoding="gzip",
+        )
         return remote_url
+
+    # Generic HTTPS PUT (e.g., presigned)
+    scheme, *_ = _split_url(remote_url)
+    if scheme in ("http", "https"):
+        r = requests.put(
+            remote_url,
+            data=gz_bytes,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Encoding": "gzip",
+            },
+        )
+        r.raise_for_status()
+        return remote_url
+
+    raise ValueError(f"Unsupported remote scheme for {remote_url}")

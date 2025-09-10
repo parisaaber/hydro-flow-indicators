@@ -304,14 +304,9 @@ async def list_sites(commons: CommonsDep):
 
 @mapping_router.get("/features")
 async def get_features(
-    geoparquet_src: str = Query(
+    geojson_src: str = Query(
         ...,
-        description="Full local or remote path to a Parquet file.",
-    ),
-    sites: Optional[List[str]] = Query(
-        default=None,
-        description="List of site IDs.",
-        example=["sub11004314 [m3/s]"],
-    ),
+        description="Full local or remote path to a geojson file.",
+    )
 ):
-    return map_features(geoparquet_src, sites)
+    return map_features(geojson_src)
