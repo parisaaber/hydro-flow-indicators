@@ -24,7 +24,7 @@ This FastAPI-based application provides a web service for computing a suite of h
 
 ```bash
 # Clone the repo
-git clone <your-repo-url>
+git clone https://github.com/parisaaber/hydro-flow-indicators.git
 cd hydro-flow-indicators
 
 # (Optional) create a virtual environment
