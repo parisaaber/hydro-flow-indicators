@@ -1,24 +1,24 @@
 # 🌊 Raven Streamflow Indicators API
 
-This FastAPI-based application provides a web service for computing a suite of hydrological indicators from Raven hydrologic model output or any comparable streamflow time series. It supports environmental flow metrics, flood frequency analysis, sub-period comparisons, and now **site-specific filtering** and **individual indicator endpoints**.
+This FastAPI-based application provides a web service for computing a suite of hydrological indicators from Raven hydrologic model output or any comparable streamflow time series. It supports environmental flow metrics, flood frequency analysis, sub-period comparisons, and site-specific filtering via a flexible and powerful API.
 
 ---
 
-## 📦 Features
+## ✨ Features
 
-* Load and preprocess Raven output or streamflow datasets from local files or web URLs
-* Filter results by one or more `site` IDs
-* Calculate hydrologic indicators:
-
-  * Mean annual flow
-  * Mean August–September flow
-  * Peak flow timing
-  * Days below EFN threshold
-  * Annual peak flow and flood quantiles (Gumbel)
-  * Weekly flow exceedance thresholds
-* Support for sub-period (e.g., pre/post intervention) comparisons
-* Built-in flood frequency analysis for return periods (e.g., Q2, Q20)
-* Exposed via RESTful API using FastAPI
+- **📊 Multiple Data Sources**: Load from local Parquet files or remote URLs
+- **🎯 Advanced Filtering**: Filter by date range and multiple site IDs
+- **📈 Comprehensive Indicators**:
+  - Mean annual & seasonal flows
+  - Peak flow timing (DOY)
+  - Environmental Flow Needs (EFN) analysis
+  - Annual peak flows and flood quantiles
+  - Weekly flow exceedance thresholds
+- **⚡ High Performance**: Powered by DuckDB for fast data processing
+- **🔬 Enhanced FFA**: Multiple distributions (Gumbel, Log-Pearson III, Gamma, etc.) with automatic best-fit selection
+- **⏰ Temporal Aggregation**: Daily, weekly, monthly, and seasonal hydrographs
+- **📊 Sub-period Analysis**: Compare pre/post intervention periods
+- **📚 Fully Documented**: Interactive OpenAPI/Swagger documentation
 
 ---
 
@@ -101,16 +101,17 @@ Compute indicators from a **local file path** or **web URL**.
 
 Fetch **specific indicators** (optionally filtered by site):
 
-| Endpoint                     | Description                            |
-| ---------------------------- | ------------------------------------ |
-| `GET /mean-annual-flow/`     | Mean annual flow                     |
-| `GET /mean-aug-sep-flow/`    | Mean August–September flow           |
-| `GET /peak-flow-timing/`     | Average peak flow timing (day of year) |
-| `GET /days-below-efn/`       | Days below EFN threshold             |
-| `GET /peak-flows/`           | Mean annual peak flows               |
-| `GET /annual-peaks/`         | Annual peak flows per water year    |
-| `GET /fit-ffa/`              | Flood Frequency Analysis (Gumbel)   |
-| `GET /weekly-flow-exceedance/` | Weekly flow exceedance thresholds   |
+Endpoint	Description	Special Parameters
+/indicators/	Compute all indicators	efn_threshold, break_point
+/indicators/mean_annual_flow	Mean annual flow	temporal_resolution
+/indicators/mean_aug_sep_flow	Aug-Sept mean flow	temporal_resolution
+/indicators/peak_flow_timing	Peak flow timing (DOY)	temporal_resolution
+/indicators/days_below_efn	Days below EFN threshold	efn_threshold, temporal_resolution
+/indicators/annual_peaks	Annual peak flows per water year	-
+/indicators/peak_flows	Mean annual peak flow	-
+/indicators/weekly_flow_exceedance	Weekly exceedance probabilities	-
+/indicators/flood_frequency_analysis	Enhanced FFA	return_periods, dist, remove_outliers, etc.
+/indicators/aggregate_flows	Aggregated hydrograph	temporal_resolution
 
 
 Each accepts:
@@ -123,19 +124,20 @@ Each accepts:
 ## 📂 Project Structure
 
 ```plaintext
-hydro-flow-indicators/
+raven-streamflow-indicators/
 ├── src/
 │   ├── raven_api/
-│   │   ├── etl.py           # Preprocessing and data loading
-│   │   ├── indicators.py    # Indicator calculation logic
-│   │   └── __init__.py      # Package init
+│   │   ├── etl.py           # CSV to Parquet conversion
+│   │   ├── indicators.py    # Core indicator calculations
+│   │   ├── utils.py         # FFA and helper functions
+│   │   └── __init__.py
 │   └── api/
 │       ├── __init__.py
-│       ├── main.py          # FastAPI entrypoint
+│       ├── main.py          # FastAPI application
 │       └── routers.py       # API route definitions
 ├── tests/
-│   └── test_data/
-│       └── Hydrographs.csv.gz  # Sample test data (compressed)
+│   └── test_data/           # Sample test data
+├── requirements.txt
 └── README.md
 ```
 
@@ -148,6 +150,7 @@ Input files should contain:
 * `date`: datetime string (or `time`)
 * `site`: site/station ID
 * `value`: flow in m³/s
+Use /etl/init to convert Raven CSV output to this format.
 
 📝 Supported formats: CSV or Parquet
 
