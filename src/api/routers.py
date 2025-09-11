@@ -14,17 +14,20 @@ from ..raven_api.indicators import (
     peak_flows,
     weekly_flow_exceedance,
 )
+from src.raven_api.mapping import map_features
 
-indicators_router = APIRouter(prefix="/indicators", tags=["Indicators"])
-etl_router = APIRouter(prefix="/etl", tags=["ETL"])
+etl_router = APIRouter(tags=["ETL"])
+indicators_router = APIRouter(tags=["Indicators"])
+mapping_router = APIRouter(tags=["Mapping"])
 
 
 @etl_router.post(
-    "/init",
-    description="Initialize the ETL process for a Raven output CSV."
+    "/init", description="Initialize the ETL process for a Raven output CSV."
 )
-async def initialize_etl(csv_path: str, output_path: str):
-    init_etl(csv_path, output_path)
+async def initialize_etl(
+    csv_path: str, output_path: str, spatial_path: str = None, join_column: str = None
+):
+    init_etl(csv_path, output_path, spatial_path, join_column)
 
 
 def common_parameters(
@@ -70,14 +73,14 @@ async def get_indicators(
         0.2,
         description="Environmental Flow Needs (EFN) threshold"
         "as a fraction of mean annual flow.",
-        example=0.2
+        example=0.2,
     ),
     break_point: Optional[int] = Query(
         None,
         description="Water year to split subperiods (e.g., 2000),"
         "or None for full period.",
-        example=2000
-    )
+        example=2000,
+    ),
 ):
     """Compute all flow indicators"
     "(optionally filtered by site and date range)."""
@@ -99,7 +102,7 @@ async def get_maf(
         default="overall",
         description="Temporal resolution: 'overall' (single value)"
         "or 'annual' (one value per year).",
-        example="annual"
+        example="annual",
     ),
 ):
     con = duckdb.connect()
@@ -124,7 +127,7 @@ async def get_mean_aug_sep_flow(
         default="overall",
         description="Temporal resolution: 'overall' (single value)"
         "or 'annual' (one value per year).",
-        example="annual"
+        example="annual",
     ),
 ):
     """Compute mean flow for August-September (overall or per year)."""
@@ -150,7 +153,7 @@ async def get_peak_flow_timing(
         default="overall",
         description="Temporal resolution: 'overall' (average across years)"
         "or 'annual' (one value per year).",
-        example="annual"
+        example="annual",
     ),
 ):
     """Compute peak flow timing (overall or per year)"
@@ -177,13 +180,13 @@ async def get_days_below_efn(
         default=0.2,
         description="Environmental Flow Needs (EFN) threshold"
         "as a fraction of mean annual flow.",
-        example=0.2
+        example=0.2,
     ),
     temporal_resolution: str = Query(
         default="overall",
         description="Temporal resolution: 'overall' (average across years)"
         "or 'annual' (one value per year).",
-        example="annual"
+        example="annual",
     ),
 ):
     """Compute the number of days below EFN for"
@@ -370,3 +373,13 @@ async def list_sites(
         return df["site"].tolist()
     finally:
         con.close()
+
+
+@mapping_router.get("/features")
+async def get_features(
+    geojson_src: str = Query(
+        ...,
+        description="Full local or remote path to a geojson file.",
+    )
+):
+    return map_features(geojson_src)
