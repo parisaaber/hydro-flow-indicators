@@ -11,6 +11,7 @@ from .utils import (
     get_site_statistics_duckdb,
 )
 
+
 def mean_annual_flow(
     con: duckdb.DuckDBPyConnection,
     parquet_path: str,
@@ -153,9 +154,9 @@ def peak_flow_timing(
                 {sites_filter}
                 {date_filter}
             )
-            SELECT site, water_year, peak_doy
-            FROM peaks
-            GROUP BY site, water_year, peak_doy
+            SELECT site, water_year, doy AS peak_flow_timing
+            FROM ranked_flows
+            WHERE rn = 1
             ORDER BY site, water_year
         """
     else:
@@ -311,12 +312,18 @@ def fit_ffa(
     remove_outliers: bool = False,
     outlier_method: str = "iqr",
     outlier_threshold: float = 1.5,
-    available_distributions: List[str] =
-    ["gumbel", "genextreme", "normal", "lognormal", "gamma", "logpearson3"],
+    available_distributions: List[str] = [
+        "gumbel",
+        "genextreme",
+        "normal",
+        "lognormal",
+        "gamma",
+        "logpearson3",
+    ],
     selection_criteria: str = "aic",
     min_years: int = 5,
     use_duckdb_stats: bool = True,
-    debug: bool = False  # Add debug option
+    debug: bool = False,  # Add debug option
 ) -> pd.DataFrame:
     """
     Enhanced Flood Frequency Analysis with DuckDB
@@ -346,26 +353,24 @@ def fit_ffa(
         and 'outliers_removed' columns.
     """
     # Initialize DuckDB connection
-    conn = duckdb.connect(':memory:')
+    conn = duckdb.connect(":memory:")
     try:
         # Register DataFrame with DuckDB
-        conn.register('peaks_data', peaks_df)
+        conn.register("peaks_data", peaks_df)
         # Filter sites if specified
         if sites:
             placeholders = ", ".join(["?"] * len(sites))
-            filter_query = (
-                f"SELECT * FROM peaks_data WHERE site IN ({placeholders})"
-                )
+            filter_query = f"SELECT * FROM peaks_data WHERE site IN ({placeholders})"
             working_df = conn.execute(filter_query, sites).df()
         else:
             working_df = peaks_df.copy()
         # Get site statistics using DuckDB
         if use_duckdb_stats:
-            site_stats = get_site_statistics_duckdb(conn, 'peaks_data')
+            site_stats = get_site_statistics_duckdb(conn, "peaks_data")
             print("Site Statistics:")
             print(site_stats)
         # Re-register the working DataFrame
-        conn.register('working_data', working_df)
+        conn.register("working_data", working_df)
         # Get sites with sufficient data using DuckDB
         sites_query = f"""
         SELECT site, COUNT(annual_peak) as n_years
@@ -378,12 +383,12 @@ def fit_ffa(
         valid_sites = conn.execute(sites_query).df()
         if valid_sites.empty:
             warnings.warn(
-                f"No sites have sufficient data"
-                f"(minimum {min_years} years)")
+                f"No sites have sufficient data" f"(minimum {min_years} years)"
+            )
             return pd.DataFrame()
         results = []
         for _, site_row in valid_sites.iterrows():
-            site = site_row['site']
+            site = site_row["site"]
             # Get data for this site using DuckDB
             site_query = f"""
             SELECT annual_peak, water_year
@@ -392,33 +397,34 @@ def fit_ffa(
             ORDER BY water_year
             """
             site_data = conn.execute(site_query).df()
-            values = site_data['annual_peak'].values
+            values = site_data["annual_peak"].values
             if debug:
                 print(f"\nProcessing site: {site}")
                 print(
                     f"Data summary: min={values.min():.2f}, "
                     f"max={values.max():.2f}, mean={values.mean():.2f}, "
-                    f"std={values.std():.2f}")
+                    f"std={values.std():.2f}"
+                )
                 print(f"Data points: {len(values)}")
             # Remove outliers if requested using DuckDB
             outliers_removed = 0
             if remove_outliers:
                 # Create temporary table for this site
-                conn.register('temp_site_data', site_data)
+                conn.register("temp_site_data", site_data)
                 # Get outlier detection query
                 outlier_query = detect_outliers_duckdb(
                     conn,
-                    'temp_site_data',
-                    'annual_peak',
+                    "temp_site_data",
+                    "annual_peak",
                     outlier_method,
-                    outlier_threshold
+                    outlier_threshold,
                 )
                 # Execute outlier detection
                 outlier_results = conn.execute(outlier_query).df()
                 # Count and remove outliers
-                outliers_removed = outlier_results['is_outlier'].sum()
-                clean_data = outlier_results[~outlier_results['is_outlier']]
-                values = clean_data['annual_peak'].values
+                outliers_removed = outlier_results["is_outlier"].sum()
+                clean_data = outlier_results[~outlier_results["is_outlier"]]
+                values = clean_data["annual_peak"].values
                 if debug:
                     print(f"Outliers removed: {outliers_removed}")
                     print(f"Clean data points: {len(values)}")
@@ -426,15 +432,14 @@ def fit_ffa(
                 if len(values) < min_years:
                     warnings.warn(
                         f"Site {site}: Insufficient data after outlier removal"
-                        )
+                    )
                     continue
 
             try:
                 # Determine distribution to use
                 if dist == "auto":
                     if debug:
-                        print(
-                            f"Trying distributions: {available_distributions}")
+                        print(f"Trying distributions: {available_distributions}")
                     best_dist, best_params = select_best_distribution(
                         values, available_distributions, selection_criteria
                     )
@@ -450,7 +455,7 @@ def fit_ffa(
                             f"Site {site}:"
                             f"Could not fit {dist} distribution - "
                             f"{gof_stats.get('error', 'Unknown error')}"
-                            )
+                        )
                         continue
 
                 # Calculate return period values
@@ -463,7 +468,7 @@ def fit_ffa(
                     )
                 rp_values = calculate_return_period_values(
                     best_dist, best_params, return_periods
-                    )
+                )
                 if debug:
                     print(f"Return period values: {rp_values}")
 
@@ -485,10 +490,10 @@ def fit_ffa(
                     "best_distribution": best_dist,
                     "outliers_removed": int(outliers_removed),
                     "data_years": len(values),
-                    "mean_flow": float(stats_result['mean_flow']),
-                    "std_flow": float(stats_result['std_flow']),
-                    "min_flow": float(stats_result['min_flow']),
-                    "max_flow": float(stats_result['max_flow'])
+                    "mean_flow": float(stats_result["mean_flow"]),
+                    "std_flow": float(stats_result["std_flow"]),
+                    "min_flow": float(stats_result["min_flow"]),
+                    "max_flow": float(stats_result["max_flow"]),
                 }
                 site_result.update(rp_values)
                 results.append(site_result)
@@ -508,7 +513,7 @@ def fit_ffa(
         # Convert results to DataFrame and perform final operations with DuckDB
         results_df = pd.DataFrame(results)
         # Register results for potential additional DuckDB operations
-        conn.register('results_data', results_df)
+        conn.register("results_data", results_df)
         # Add ranking based on mean flow using DuckDB
         ranking_query = """
         SELECT *,
@@ -765,8 +770,8 @@ def aggregate_flows(
     parquet_path: str,
     sites: Optional[List[str]] = None,
     start_date: Optional[str] = None,  # Format: "YYYY-MM-DD"
-    end_date: Optional[str] = None,    # Format: "YYYY-MM-DD"
-    temporal_resolution: str = "daily"  # "weekly","monthly", "seasonal"
+    end_date: Optional[str] = None,  # Format: "YYYY-MM-DD"
+    temporal_resolution: str = "daily",  # "weekly","monthly", "seasonal"
 ) -> pd.DataFrame:
 
     sites_filter = ""
@@ -803,7 +808,7 @@ def aggregate_flows(
         raise ValueError(
             "Invalid temporal_resolution: choose from"
             "daily, weekly, monthly, seasonal"
-                        )
+        )
 
     query = f"""
         SELECT
