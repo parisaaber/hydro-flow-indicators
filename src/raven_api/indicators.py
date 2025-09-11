@@ -1,34 +1,15 @@
-from fastapi import Query
 from typing import Optional, List
 import pandas as pd
 import numpy as np
 import duckdb
-from scipy.stats import gumbel_r
-
-
-def common_query_params(
-    parquet_src: str = Query(..., description="Full path to Parquet"),
-    sites: Optional[List[str]] = Query(
-        None, description="List of site IDs", example=["sub11004314 [m3/s]"]
-    ),
-    start_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
-    end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
-    temporal_resolution: str = Query("overall", description="overall|annual"),
-    efn_threshold: float = Query(0.2, description="EFN threshold fraction"),
-    break_point: Optional[int] = Query(
-        None, description="Water year to split subperiods"
-    ),
-):
-    return {
-        "parquet_src": parquet_src,
-        "sites": sites,
-        "start_date": start_date,
-        "end_date": end_date,
-        "temporal_resolution": temporal_resolution,
-        "efn_threshold": efn_threshold,
-        "break_point": break_point,
-    }
-
+import warnings
+from .utils import (
+    detect_outliers_duckdb,
+    fit_distribution,
+    select_best_distribution,
+    calculate_return_period_values,
+    get_site_statistics_duckdb,
+)
 
 def mean_annual_flow(
     con: duckdb.DuckDBPyConnection,
@@ -51,7 +32,7 @@ def mean_annual_flow(
         query = f"""
             SELECT site, water_year, AVG(value) AS mean_annual_flow
             FROM parquet_scan('{parquet_path}')
-            WHERE 1=1
+            WHERE value IS NOT NULL
             {sites_filter}
             {date_filter}
             GROUP BY site, water_year
@@ -63,7 +44,7 @@ def mean_annual_flow(
             WITH mean_1 AS (
                 SELECT AVG(value) AS maf_per_year, site, water_year
                 FROM parquet_scan('{parquet_path}')
-                WHERE 1=1
+                WHERE value IS NOT NULL
                 {sites_filter}
                 {date_filter}
                 GROUP BY site, water_year
@@ -94,10 +75,10 @@ def mean_aug_sep_flow(
     Returns:
         DataFrame with 'site' and 'mean_aug_sep_flow' columns.
     """
-    site_filter = ""
+    sites_filter = ""
     if sites:
         sites_tuple = tuple(sites)
-        site_filter = f"AND site IN {sites_tuple}"
+        sites_filter = f"AND site IN {sites_tuple}"
     date_filter = ""
     if start_date and end_date:
         date_filter = f"AND date BETWEEN '{start_date}' AND '{end_date}'"
@@ -108,7 +89,7 @@ def mean_aug_sep_flow(
                 SELECT site, water_year, AVG(value) AS avg_aug_sep_flow
                 FROM parquet_scan('{parquet_path}')
                 WHERE EXTRACT(month FROM date) IN (8, 9)
-                {site_filter}
+                {sites_filter}
                 {date_filter}
                 GROUP BY site, water_year
             )
@@ -122,7 +103,7 @@ def mean_aug_sep_flow(
                 SELECT site, water_year, AVG(value) AS avg_aug_sep_flow
                 FROM parquet_scan('{parquet_path}')
                 WHERE EXTRACT(month FROM date) IN (8, 9)
-                {site_filter}
+                {sites_filter}
                 {date_filter}
                 GROUP BY site, water_year
             )
@@ -152,51 +133,50 @@ def peak_flow_timing(
     Returns:
         DataFrame with 'site' and 'peak_flow_timing' columns.
     """
-    site_filter = ""
+    sites_filter = ""
     if sites:
         sites_tuple = tuple(sites)
-        site_filter = f"AND site IN {sites_tuple}"
+        sites_filter = f"AND site IN {sites_tuple}"
     date_filter = ""
     if start_date and end_date:
         date_filter = f"AND date BETWEEN '{start_date}' AND '{end_date}'"
 
     if temporal_resolution == "annual":
         query = f"""
-            WITH daily AS (
-                SELECT site, water_year, value, EXTRACT(doy FROM date) AS doy
+            WITH ranked_flows AS (
+                SELECT site, water_year, value,
+                EXTRACT(doy FROM date) AS doy,
+                ROW_NUMBER() OVER (PARTITION BY site,
+                water_year ORDER BY value DESC) AS rn
                 FROM parquet_scan('{parquet_path}')
                 WHERE value IS NOT NULL
-                {site_filter}
+                {sites_filter}
                 {date_filter}
-            ),
-            peaks AS (
-                SELECT site, water_year,
-                FIRST_VALUE(doy) OVER (PARTITION BY site,
-                water_year ORDER BY value DESC) AS peak_doy
-                FROM daily
             )
-            SELECT site, water_year, peak_doy AS peak_flow_timing
+            SELECT site, water_year, peak_doy
             FROM peaks
             GROUP BY site, water_year, peak_doy
             ORDER BY site, water_year
         """
     else:
         query = f"""
-            WITH daily AS (
-                SELECT site, water_year, value, EXTRACT(doy FROM date) AS doy
+            WITH ranked_flows AS (
+                SELECT site, water_year, value,
+                EXTRACT(doy FROM date) AS doy,
+                ROW_NUMBER() OVER (PARTITION BY site,
+                water_year ORDER BY value DESC) AS rn
                 FROM parquet_scan('{parquet_path}')
                 WHERE value IS NOT NULL
-                {site_filter}
+                {sites_filter}
                 {date_filter}
             ),
-            peaks AS (
-                SELECT site, water_year,
-                FIRST_VALUE(doy) OVER (PARTITION BY site,
-                water_year ORDER BY value DESC) AS peak_doy
-                FROM daily
+            annual_peaks AS (
+                SELECT site, water_year, doy
+                FROM ranked_flows
+                WHERE rn = 1
             )
-            SELECT site, AVG(peak_doy) AS peak_flow_timing
-            FROM peaks
+            SELECT site, AVG(doy) AS peak_flow_timing
+            FROM annual_peaks
             GROUP BY site
             ORDER BY site
         """
@@ -225,10 +205,10 @@ def days_below_efn(
     Returns:
         DataFrame with 'site' and 'days_below_efn' columns.
     """
-    site_filter = ""
+    sites_filter = ""
     if sites:
         sites_tuple = tuple(sites)
-        site_filter = f"AND p.site IN {sites_tuple}"
+        sites_filter = f"AND p.site IN {sites_tuple}"
     date_filter = ""
     if start_date and end_date:
         date_filter = f"AND p.date BETWEEN '{start_date}' AND '{end_date}'"
@@ -250,7 +230,7 @@ def days_below_efn(
             FROM parquet_scan('{parquet_path}') p
             JOIN mean_annual_site m ON p.site = m.site
             WHERE value IS NOT NULL
-            {site_filter}
+            {sites_filter}
             {date_filter}
         )
     """
@@ -302,10 +282,10 @@ def annual_peaks(
     Returns:
         DataFrame with 'site', 'water_year', and 'annual_peak' columns.
     """
-    site_filter = ""
+    sites_filter = ""
     if sites:
         sites_tuple = tuple(sites)
-        site_filter = f"AND site IN {sites_tuple}"
+        sites_filter = f"AND site IN {sites_tuple}"
 
     date_filter = ""
     if start_date and end_date:
@@ -315,7 +295,7 @@ def annual_peaks(
         SELECT site, water_year, MAX(value) AS annual_peak
         FROM parquet_scan('{parquet_path}')
         WHERE value IS NOT NULL
-        {site_filter}
+        {sites_filter}
         {date_filter}
         GROUP BY site, water_year
         ORDER BY site, water_year
@@ -325,39 +305,222 @@ def annual_peaks(
 
 def fit_ffa(
     peaks_df: pd.DataFrame,
-    dist: str = "gumbel",
-    return_periods: list[int] = [2, 20],
+    dist: str = "auto",
+    return_periods: List[int] = [2, 20],
     sites: Optional[List[str]] = None,
+    remove_outliers: bool = False,
+    outlier_method: str = "iqr",
+    outlier_threshold: float = 1.5,
+    available_distributions: List[str] =
+    ["gumbel", "genextreme", "normal", "lognormal", "gamma", "logpearson3"],
+    selection_criteria: str = "aic",
+    min_years: int = 5,
+    use_duckdb_stats: bool = True,
+    debug: bool = False  # Add debug option
 ) -> pd.DataFrame:
     """
-    Fit Flood Frequency Analysis using Gumbel distribution
-    for specified return periods.
+    Enhanced Flood Frequency Analysis with DuckDB
+    integration, multiple distributions,
+    outlier detection, and automatic best-fit selection.
 
     Args:
         peaks_df: DataFrame with 'site', 'water_year', 'annual_peak'.
-        dist: Distribution name (currently only 'gumbel' is supported).
+        dist: Distribution name or 'auto' for automatic selection.
         return_periods: List of return periods to estimate (e.g., [2, 20]).
+        sites: Optional list of sites to analyze.
+        remove_outliers: Whether to remove outliers before fitting.
+        outlier_method: Method for outlier detection ('iqr', 'zscore',
+        'modified_zscore').
+        outlier_threshold: Threshold for outlier detection.
+        available_distributions: List of distributions to consider
+        for auto selection.
+        selection_criteria: Criteria for automatic distribution selection
+        ('aic', 'bic', 'ks', 'rmse').
+        min_years: Minimum number of years required for analysis.
+        use_duckdb_stats: Whether to use DuckDB for statistical calculations.
+        debug: Whether to print debug information.
 
     Returns:
-        DataFrame with 'site' and return period
-        discharge values (e.g., 'Q2', 'Q20').
+        DataFrame with 'site', return period discharge values,
+        'best_distribution',
+        and 'outliers_removed' columns.
     """
-    if sites:
-        peaks_df = peaks_df[peaks_df["site"].isin(sites)]
-    result = []
-    for site, group in peaks_df.groupby("site"):
-        values = group["annual_peak"].dropna()
-        if len(values) < 2:
-            continue
-        if dist == "gumbel":
-            loc, scale = gumbel_r.fit(values)
-            rp_values = {
-                f"Q{rp}": gumbel_r.ppf(1 - 1 / rp, loc=loc, scale=scale)
-                for rp in return_periods
-            }
-            rp_values["site"] = site
-            result.append(rp_values)
-    return pd.DataFrame(result)
+    # Initialize DuckDB connection
+    conn = duckdb.connect(':memory:')
+    try:
+        # Register DataFrame with DuckDB
+        conn.register('peaks_data', peaks_df)
+        # Filter sites if specified
+        if sites:
+            placeholders = ", ".join(["?"] * len(sites))
+            filter_query = (
+                f"SELECT * FROM peaks_data WHERE site IN ({placeholders})"
+                )
+            working_df = conn.execute(filter_query, sites).df()
+        else:
+            working_df = peaks_df.copy()
+        # Get site statistics using DuckDB
+        if use_duckdb_stats:
+            site_stats = get_site_statistics_duckdb(conn, 'peaks_data')
+            print("Site Statistics:")
+            print(site_stats)
+        # Re-register the working DataFrame
+        conn.register('working_data', working_df)
+        # Get sites with sufficient data using DuckDB
+        sites_query = f"""
+        SELECT site, COUNT(annual_peak) as n_years
+        FROM working_data
+        WHERE annual_peak IS NOT NULL
+        GROUP BY site
+        HAVING COUNT(annual_peak) >= {min_years}
+        ORDER BY site
+        """
+        valid_sites = conn.execute(sites_query).df()
+        if valid_sites.empty:
+            warnings.warn(
+                f"No sites have sufficient data"
+                f"(minimum {min_years} years)")
+            return pd.DataFrame()
+        results = []
+        for _, site_row in valid_sites.iterrows():
+            site = site_row['site']
+            # Get data for this site using DuckDB
+            site_query = f"""
+            SELECT annual_peak, water_year
+            FROM working_data
+            WHERE site = '{site}' AND annual_peak IS NOT NULL
+            ORDER BY water_year
+            """
+            site_data = conn.execute(site_query).df()
+            values = site_data['annual_peak'].values
+            if debug:
+                print(f"\nProcessing site: {site}")
+                print(
+                    f"Data summary: min={values.min():.2f}, "
+                    f"max={values.max():.2f}, mean={values.mean():.2f}, "
+                    f"std={values.std():.2f}")
+                print(f"Data points: {len(values)}")
+            # Remove outliers if requested using DuckDB
+            outliers_removed = 0
+            if remove_outliers:
+                # Create temporary table for this site
+                conn.register('temp_site_data', site_data)
+                # Get outlier detection query
+                outlier_query = detect_outliers_duckdb(
+                    conn,
+                    'temp_site_data',
+                    'annual_peak',
+                    outlier_method,
+                    outlier_threshold
+                )
+                # Execute outlier detection
+                outlier_results = conn.execute(outlier_query).df()
+                # Count and remove outliers
+                outliers_removed = outlier_results['is_outlier'].sum()
+                clean_data = outlier_results[~outlier_results['is_outlier']]
+                values = clean_data['annual_peak'].values
+                if debug:
+                    print(f"Outliers removed: {outliers_removed}")
+                    print(f"Clean data points: {len(values)}")
+                # Check if we still have enough data after outlier removal
+                if len(values) < min_years:
+                    warnings.warn(
+                        f"Site {site}: Insufficient data after outlier removal"
+                        )
+                    continue
+
+            try:
+                # Determine distribution to use
+                if dist == "auto":
+                    if debug:
+                        print(
+                            f"Trying distributions: {available_distributions}")
+                    best_dist, best_params = select_best_distribution(
+                        values, available_distributions, selection_criteria
+                    )
+                    if debug:
+                        print(f"Best distribution selected: {best_dist}")
+                else:
+                    best_dist = dist
+                    best_params, gof_stats = fit_distribution(values, dist)
+                    if best_params is None:
+                        if debug:
+                            print(f"Failed to fit {dist}: {gof_stats}")
+                        warnings.warn(
+                            f"Site {site}:"
+                            f"Could not fit {dist} distribution - "
+                            f"{gof_stats.get('error', 'Unknown error')}"
+                            )
+                        continue
+
+                # Calculate return period values
+                if any(rp > len(values) for rp in return_periods):
+                    warnings.warn(
+                        f"Site {site}: Some return periods"
+                        "{return_periods} exceed "
+                        f"data years ({len(values)})."
+                        "Estimates may be unreliable."
+                    )
+                rp_values = calculate_return_period_values(
+                    best_dist, best_params, return_periods
+                    )
+                if debug:
+                    print(f"Return period values: {rp_values}")
+
+                # Get additional statistics using DuckDB
+                site_stats_query = f"""
+                SELECT
+                    AVG(annual_peak) as mean_flow,
+                    STDDEV(annual_peak) as std_flow,
+                    MIN(annual_peak) as min_flow,
+                    MAX(annual_peak) as max_flow
+                FROM working_data
+                WHERE site = '{site}' AND annual_peak IS NOT NULL
+                """
+                stats_result = conn.execute(site_stats_query).df().iloc[0]
+
+                # Compile results
+                site_result = {
+                    "site": site,
+                    "best_distribution": best_dist,
+                    "outliers_removed": int(outliers_removed),
+                    "data_years": len(values),
+                    "mean_flow": float(stats_result['mean_flow']),
+                    "std_flow": float(stats_result['std_flow']),
+                    "min_flow": float(stats_result['min_flow']),
+                    "max_flow": float(stats_result['max_flow'])
+                }
+                site_result.update(rp_values)
+                results.append(site_result)
+                if debug:
+                    print(f"Successfully processed site {site}")
+
+            except Exception as e:
+                if debug:
+                    print(f"Error processing site {site}: {str(e)}")
+                warnings.warn(f"Site {site}: Error in analysis - {str(e)}")
+                continue
+
+        if not results:
+            warnings.warn("No sites could be successfully analyzed")
+            return pd.DataFrame()
+
+        # Convert results to DataFrame and perform final operations with DuckDB
+        results_df = pd.DataFrame(results)
+        # Register results for potential additional DuckDB operations
+        conn.register('results_data', results_df)
+        # Add ranking based on mean flow using DuckDB
+        ranking_query = """
+        SELECT *,
+            RANK() OVER (ORDER BY mean_flow DESC) as flow_rank
+        FROM results_data
+        ORDER BY flow_rank
+        """
+        final_results = conn.execute(ranking_query).df()
+        return final_results
+    finally:
+        # Close DuckDB connection
+        conn.close()
 
 
 def peak_flows(
@@ -377,10 +540,10 @@ def peak_flows(
     Returns:
         DataFrame with 'site' and 'mean_annual_peak' columns.
     """
-    site_filter = ""
+    sites_filter = ""
     if sites:
         sites_tuple = tuple(sites)
-        site_filter = f"AND site IN {sites_tuple}"
+        sites_filter = f"AND site IN {sites_tuple}"
 
     date_filter = ""
     if start_date and end_date:
@@ -391,7 +554,7 @@ def peak_flows(
             SELECT site, water_year, MAX(value) AS annual_peak
             FROM parquet_scan('{parquet_path}')
             WHERE value IS NOT NULL
-            {site_filter}
+            {sites_filter}
             {date_filter}
             GROUP BY site, water_year
         )
@@ -410,19 +573,15 @@ def weekly_flow_exceedance(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> pd.DataFrame:
-    site_filter = ""
+    base_filter = "WHERE value IS NOT NULL"
+    sites_filter = ""
     if sites:
         sites_tuple = tuple(sites)
-        site_filter = f"WHERE site IN {sites_tuple}"
-    else:
-        site_filter = ""
+        sites_filter = f" AND site IN {sites_tuple}"
 
     date_filter = ""
     if start_date and end_date:
-        if site_filter:
-            date_filter = f"AND date BETWEEN '{start_date}' AND '{end_date}'"
-        else:
-            date_filter = f"WHERE date BETWEEN '{start_date}' AND '{end_date}'"
+        date_filter = f" AND date BETWEEN '{start_date}' AND '{end_date}'"
 
     query = f"""
     SELECT
@@ -438,7 +597,8 @@ def weekly_flow_exceedance(
         quantile_cont(value, 0.20) AS p80,
         quantile_cont(value, 0.05) AS p95
     FROM parquet_scan('{parquet_path}')
-    {site_filter}
+    {base_filter}
+    {sites_filter}
     {date_filter}
     GROUP BY
         site,
@@ -488,10 +648,10 @@ def calculate_all_indicators(
         if start_date and end_date:
             date_filter = f"WHERE date BETWEEN '{start_date}' AND '{end_date}'"
 
-        site_filter = ""
+        sites_filter = ""
         if sites:
             sites_tuple = tuple(sites)
-            site_filter = (
+            sites_filter = (
                 f"AND site IN {sites_tuple}"
                 if date_filter
                 else f"WHERE site IN {sites_tuple}"
@@ -501,7 +661,7 @@ def calculate_all_indicators(
             SELECT date, site
             FROM parquet_scan('{parquet_path}')
             {date_filter}
-            {site_filter}
+            {sites_filter}
         """
         df_dates = con.execute(query).fetchdf()
         df_dates["date"] = pd.to_datetime(df_dates["date"])
@@ -530,7 +690,7 @@ def calculate_all_indicators(
             if period == "full_period":
                 sub_start = start_date
                 sub_end = end_date
-            else:
+            elif break_point is not None:
                 if "before" in period:
                     sub_start = start_date
                     sub_end = f"{break_point}-09-30"
@@ -598,3 +758,65 @@ def calculate_all_indicators(
 
     except Exception as e:
         raise RuntimeError(f"Error in calculating indicators: {e}")
+
+
+def aggregate_flows(
+    con: duckdb.DuckDBPyConnection,
+    parquet_path: str,
+    sites: Optional[List[str]] = None,
+    start_date: Optional[str] = None,  # Format: "YYYY-MM-DD"
+    end_date: Optional[str] = None,    # Format: "YYYY-MM-DD"
+    temporal_resolution: str = "daily"  # "weekly","monthly", "seasonal"
+) -> pd.DataFrame:
+
+    sites_filter = ""
+    if sites:
+        sites_tuple = tuple(sites)
+        sites_filter = f"AND site IN {sites_tuple}"
+
+    date_filter = ""
+    if start_date and end_date:
+        date_filter = f"AND date BETWEEN '{start_date}' AND '{end_date}'"
+
+    if temporal_resolution == "daily":
+        group_expr = "date"
+    elif temporal_resolution == "weekly":
+        group_expr = "strftime('%Y-%W', date)"
+    elif temporal_resolution == "monthly":
+        group_expr = "strftime('%Y-%m', date)"
+    elif temporal_resolution == "seasonal":
+        # Define season as "YYYY-Season"
+        group_expr = """
+            strftime('%Y', date) || '-' ||
+            CASE
+                WHEN CAST(strftime('%m', date) AS INTEGER)
+                IN (12, 1, 2) THEN 'Winter'
+                WHEN CAST(strftime('%m', date) AS INTEGER)
+                BETWEEN 3 AND 5 THEN 'Spring'
+                WHEN CAST(strftime('%m', date) AS INTEGER)
+                BETWEEN 6 AND 8 THEN 'Summer'
+                WHEN CAST(strftime('%m', date) AS INTEGER)
+                BETWEEN 9 AND 11 THEN 'Fall'
+            END
+        """
+    else:
+        raise ValueError(
+            "Invalid temporal_resolution: choose from"
+            "daily, weekly, monthly, seasonal"
+                        )
+
+    query = f"""
+        SELECT
+            site,
+            {group_expr} AS period,
+            AVG(value) AS mean_flow
+        FROM parquet_scan('{parquet_path}')
+        WHERE value IS NOT NULL
+        {sites_filter}
+        {date_filter}
+        GROUP BY site, period
+        ORDER BY site, period
+    """
+
+    df = con.execute(query).fetchdf()
+    return df.rename(columns={"period": "time_period"})

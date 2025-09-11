@@ -1,27 +1,24 @@
 # 🌊 Raven Streamflow Indicators API
 
-This FastAPI-based application provides a web service for computing a suite of hydrological indicators from Raven hydrologic model output or any comparable streamflow time series. It supports environmental flow metrics, flood frequency analysis, sub-period comparisons, and now **site-specific filtering** and **individual indicator endpoints**.
-
----
+This FastAPI-based application provides a web service for computing a suite of hydrological indicators from Raven hydrologic model output or any comparable streamflow time series. It supports environmental flow metrics, flood frequency analysis, sub-period comparisons, and **site-specific filtering** via a flexible and powerful API.
 
 ## 📦 Features
 
-- Load and preprocess Raven output or streamflow datasets from local files or web URLs
-- Filter results by one or more `site` IDs
-- Calculate hydrologic indicators:
-
-  - Mean annual flow
-  - Mean August–September flow
-  - Peak flow timing
-  - Days below EFN threshold
-  - Annual peak flow and flood quantiles (Gumbel)
-  - Weekly flow exceedance thresholds
-
-- Support for sub-period (e.g., pre/post intervention) comparisons
-- Built-in flood frequency analysis for return periods (e.g., Q2, Q20)
-- Exposed via RESTful API using FastAPI
-
----
+- **Flexible Data Source**: Load and preprocess streamflow datasets from local Parquet files or remote URLs.
+- **Advanced Filtering**: Filter results by date range and one or more `site` IDs.
+- **Comprehensive Hydrologic Indicators**:
+  - Mean annual flow (overall or annual)
+  - Mean August–September flow (overall or annual)
+  - Peak flow timing, overall average or per year (Day of Year)
+  - Days below Environmental Flow Needs (EFN) threshold (overall or annual)
+  - Annual peak flows
+  - Mean annual peak flow
+  - Weekly flow exceedance thresholds (P05, P10, ..., P95)
+  - **Enhanced Flood Frequency Analysis (FFA)** with multiple distributions (Gumbel, Log-Pearson III, Gamma, etc.), automatic best-fit selection, and outlier detection.
+- **Temporal Aggregation**: Retrieve daily, weekly, monthly, or seasonal hydrographs.
+- **Sub-period Analysis**: Compare indicators before and after a specified break point year.
+- **Built for Scale**: Leverages DuckDB for fast querying and processing of large datasets.
+- **RESTful API**: Fully documented with OpenAPI and Swagger UI.
 
 ## 🛠 Installation
 
@@ -86,122 +83,109 @@ http://0.0.0.0:8000/docs
 
 ## 🔌 API Endpoints
 
-### `GET /`
+### `POST /etl/init`
 
-Basic welcome message.
+Initialize the ETL process to convert a Raven output CSV to the internal Parquet format.
 
----
+- **Body Parameters**: `csv_path`, `output_path`
 
-### `POST /indicators/`
+### `GET /indicators/sites`
 
-Upload a Raven CSV or Parquet file and compute all indicators.
+List all available site names in a Parquet file.
 
-#### Form Data:
+- **Query Parameter**: `parquet_src` (required)
 
-- `file` _(file, required)_: Raven output CSV or Parquet file.
-- `efn_threshold` _(float, optional, default=0.2)_: EFN threshold as a fraction of mean annual flow (MAF).
-- `break_point` _(int, optional)_: Water year to split into subperiods.
-- `sites` _(comma-separated list, optional)_: Filter by one or more site IDs.
+## 🧮 Indicator Calculation Endpoints
 
----
+All indicator endpoints accept these common query parameters for filtering:
 
-### `GET /indicators-local/`
+- `parquet_src` **(str, required)**: Full path or URL to a Parquet file.
+- `sites` **(List[str], optional)**: Filter results for specific sites (e.g., `sites=site1&sites=site2`).
+- `start_date` **(str, optional)**: Start date for filtering (`YYYY-MM-DD`).
+- `end_date` **(str, optional)**: End date for filtering (`YYYY-MM-DD`).
 
-Compute indicators from a **local file path** or **web URL**.
-
-#### Query Parameters:
-
-- `csv_path` _(str, required)_: Path or URL to Raven CSV/Parquet file.
-- `efn_threshold` _(float, optional, default=0.2)_
-- `break_point` _(int, optional)_
-- `sites` _(comma-separated string, optional)_
-
----
-
-### 🔍 Individual Indicator Endpoints
-
-Fetch **specific indicators** (optionally filtered by site):
-
-| Endpoint                       | Description                            |
-| ------------------------------ | -------------------------------------- |
-| `GET /mean-annual-flow/`       | Mean annual flow                       |
-| `GET /mean-aug-sep-flow/`      | Mean August–September flow             |
-| `GET /peak-flow-timing/`       | Average peak flow timing (day of year) |
-| `GET /days-below-efn/`         | Days below EFN threshold               |
-| `GET /peak-flows/`             | Mean annual peak flows                 |
-| `GET /annual-peaks/`           | Annual peak flows per water year       |
-| `GET /fit-ffa/`                | Flood Frequency Analysis (Gumbel)      |
-| `GET /weekly-flow-exceedance/` | Weekly flow exceedance thresholds      |
-
-Each accepts:
-
-- `csv_path` _(str, required)_
-- Additional params like `efn_threshold`, `sites` (comma-separated), etc.
-
----
+| Endpoint                                       | Description                                                            | Specific Parameters                                                                                                   |
+| :--------------------------------------------- | :--------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------- |
+| **`GET /indicators/`**                         | Compute **all indicators** for the specified period or subperiods.     | `efn_threshold`, `break_point`                                                                                        |
+| **`GET /indicators/mean_annual_flow`**         | Mean annual flow.                                                      | `temporal_resolution` (`overall` or `annual`)                                                                         |
+| **`GET /indicators/mean_aug_sep_flow`**        | Mean August–September flow.                                            | `temporal_resolution` (`overall` or `annual`)                                                                         |
+| **`GET /indicators/peak_flow_timing`**         | Average day of year of annual peak flow.                               | `temporal_resolution` (`overall` or `annual`)                                                                         |
+| **`GET /indicators/days_below_efn`**           | Number of days below the Environmental Flow Needs threshold.           | `efn_threshold`, `temporal_resolution` (`overall` or `annual`)                                                        |
+| **`GET /indicators/annual_peaks`**             | Annual peak flows for each water year.                                 | -                                                                                                                     |
+| **`GET /indicators/peak_flows`**               | Mean annual peak flow.                                                 | -                                                                                                                     |
+| **`GET /indicators/weekly_flow_exceedance`**   | Weekly flow exceedance probabilities (P05 to P95).                     | -                                                                                                                     |
+| **`GET /indicators/flood_frequency_analysis`** | **Enhanced FFA** with configurable distributions and outlier handling. | `return_periods`, `dist`, `remove_outliers`, `outlier_method`, `outlier_threshold`, `min_years`, `selection_criteria` |
+| **`GET /indicators/aggregate_flows`**          | Get a hydrograph aggregated to a specified time resolution.            | `temporal_resolution` (`daily`, `weekly`, `monthly`, `seasonal`)                                                      |
 
 ## 📂 Project Structure
 
-```plaintext
+```
 hydro-flow-indicators/
 ├── src/
 │   ├── raven_api/
-│   │   ├── etl.py           # Preprocessing and data loading
-│   │   ├── indicators.py    # Indicator calculation logic
-│   │   └── __init__.py      # Package init
+│   │   ├── etl.py           # ETL process to convert CSV to Parquet
+│   │   ├── indicators.py    # Core indicator calculation logic
+│   │   ├── utils.py         # Helper functions (FFA, outlier detection)
+│   │   └── __init__.py
 │   └── api/
 │       ├── __init__.py
-│       ├── main.py          # FastAPI entrypoint
-│       └── routers.py       # API route definitions
+│       ├── main.py          # FastAPI application factory
+│       └── routers.py       # API route definitions (this file)
 ├── tests/
-│   └── test_data/
-│       └── Hydrographs.csv.gz  # Sample test data (compressed)
+│   └── test_data/           # Directory for sample test data
 └── README.md
 ```
 
----
-
 ## 📈 Input Data Format
 
-Input files should contain:
+The API expects Parquet files with the following schema:
 
-- `date`: datetime string (or `time`)
-- `site`: site/station ID
-- `value`: flow in m³/s
+- `date` **(date)**: The date of the observation.
+- `site` **(str)**: A unique identifier for the gauge/site (e.g., `"sub11004314 [m3/s]"`).
+- `value` **(float)**: The streamflow value, ideally in m³/s.
 
-📝 Supported formats: CSV or Parquet
+**Note**: The ETL endpoint (`/etl/init`) is provided to convert from Raven's CSV output to this required Parquet format.
 
-Example CSV snippet:
+## 💡 Example Usage
 
-```csv
-date,site,value
-2020-01-01,sub_xxx1,1.23
-2020-01-02,sub_xxx1,1.12
-...
+### 1. Get a list of all available sites
+
+```bash
+curl "http://127.0.0.1:8000/indicators/sites?parquet_src=/path/to/data.parquet"
 ```
 
-You can find sample data here:
+### 2. Calculate all indicators for two sites, pre and post-2010
 
-[Hydrographs.csv.gz](https://github.com/parisaaber/hydro-flow-indicators/blob/main/tests/test_data/Hydrographs.csv.gz)
-
----
-
-## 💡 Example Workflow
-
-### Compute all indicators for remote data with site filtering and subperiod:
-
-```
-http://127.0.0.1:8000/indicators-local/?csv_path=https://github.com/parisaaber/hydro-flow-indicators/raw/main/tests/test_data/Hydrographs.csv.gz&efn_threshold=0.2&break_point=2005&sites=sub_xxx1,sub_xxx2
+```bash
+curl "http://127.0.0.1:8000/indicators/?\
+parquet_src=/path/to/data.parquet\
+&sites=sub11004314 [m3/s]\
+&sites=sub11004315 [m3/s]\
+&efn_threshold=0.2\
+&break_point=2010"
 ```
 
-### Fetch only mean annual flow for site `sub_xxx1`:
+### 3. Perform a Flood Frequency Analysis for a 100-year event using Log-Pearson III
 
-```
-http://127.0.0.1:8000/mean-annual-flow/?csv_path=https://github.com/parisaaber/hydro-flow-indicators/raw/main/tests/test_data/Hydrographs.csv.gz&sites=sub_xxx1
+```bash
+curl "http://127.0.0.1:8000/indicators/flood_frequency_analysis?\
+parquet_src=/path/to/data.parquet\
+&sites=sub11004314 [m3/s]\
+&return_periods=2,20,100\
+&dist=logpearson3\
+&remove_outliers=true\
+&outlier_method=iqr"
 ```
 
----
+### 4. Retrieve the daily aggregated hydrograph for a site
+
+```bash
+curl "http://127.0.0.1:8000/indicators/aggregate_flows?\
+parquet_src=/path/to/data.parquet\
+&sites=sub11004314 [m3/s]\
+&temporal_resolution=daily\
+&start_date=2010-01-01\
+&end_date=2010-12-31"
+```
 
 ## 🪪 License
-
-MIT License. See [LICENSE](LICENSE) for full terms.

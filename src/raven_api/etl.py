@@ -83,7 +83,9 @@ def init_etl(
     """
     with TemporaryDirectory() as tmp_dir:
         if not os.path.exists(csv_src):
-            csv_dst = os.path.join(tmp_dir, f"{next(_get_candidate_names())}.csv")
+            csv_dst = os.path.join(
+                tmp_dir, f"{next(_get_candidate_names())}.csv"
+                )
             collect_remote(csv_src, csv_dst)
             csv_src = csv_dst
 
@@ -190,9 +192,12 @@ def load_raven_output(csv_path: str) -> pd.DataFrame:
     return df
 
 
-def reshape_to_long(df: pd.DataFrame, exclude_precip: bool = True) -> pd.DataFrame:
+def reshape_to_long(
+    df: pd.DataFrame, exclude_precip: bool = True
+) -> pd.DataFrame:
     """
-    Convert wide-format dataframe to long format with optional exclusion of precip columns.
+    Convert wide-format dataframe to long format
+    with optional exclusion of precip columns.
 
     Args:
         df: DataFrame in wide format.
@@ -253,7 +258,9 @@ def load_parquet_data(parquet_path: str) -> pd.DataFrame:
     return df
 
 
-def assign_subperiods(df: pd.DataFrame, break_point: int | None) -> pd.DataFrame:
+def assign_subperiods(
+    df: pd.DataFrame, break_point: int | None
+) -> pd.DataFrame:
     """
     Add a 'subperiod' column to the DataFrame based on water year break.
 
