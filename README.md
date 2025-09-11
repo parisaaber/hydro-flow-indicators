@@ -25,6 +25,8 @@ This FastAPI-based application provides a web service for computing a suite of h
 
 ## 🛠 Installation
 
+### System
+
 ```bash
 # Clone the repo
 git clone https://github.com/parisaaber/hydro-flow-indicators.git
@@ -40,40 +42,47 @@ python -m pip install -e .
 # (Optional) Run the tests
 python -m unittest -v tests/test_indicators_with_real_data.py
 
+# Run the API
+uvicorn src.api.main:app --reload
+
+# To visit the docs
+http://127.0.0.1:8000/docs
+
 # Once done, deactivate and remove the virtual environment
 deactivate
 rm -rf venv
 ```
 
-### Example `requirements.txt`
+### Using Docker
 
-```txt
-fastapi
-uvicorn
-pandas
-numpy
-duckdb
-scipy
-requests
-geopandas
-pyproj
-shapely
-boto3
+Alternatively, run the app using Docker.
+
+```Bash
+# Build the image with the name hfi
+docker build -t hfi -f Dockerfile .
+
+# Run the tests
+docker run --rm -it \
+  --entrypoint /bin/sh \
+  -v "$HOME/.aws:/root/.aws" \
+  -v "$(pwd)/tests:/tests" \
+  hfi
+
+python -m unittest discover -s /tests
+
+# Run the API
+docker run --rm -it -p 8000:8000 \
+  --entrypoint "" \
+  -e PYTHONPATH="/var/task/py:/app" \
+  -v "$(pwd)/src:/app/src" \
+  --workdir /app \
+  hfi \
+  uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+# To visit the docs
+http://0.0.0.0:8000/docs
+
 ```
-
----
-
-## 🚀 Running the API
-
-```bash
-uvicorn src.api.main:app --reload
-```
-
-Then visit:
-
-[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) — interactive Swagger UI
-
----
 
 ## 🔌 API Endpoints
 
