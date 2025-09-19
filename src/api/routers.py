@@ -1,8 +1,8 @@
 from typing import Annotated, List, Optional
 from fastapi import APIRouter, Depends, Query
 import duckdb
-from ..raven_api.etl import init_etl
-from ..raven_api.indicators import (
+from raven_api.etl import init_etl
+from raven_api.indicators import (
     calculate_all_indicators,
     days_below_efn,
     fit_ffa,
@@ -14,7 +14,7 @@ from ..raven_api.indicators import (
     peak_flows,
     weekly_flow_exceedance,
 )
-from src.raven_api.mapping import map_features
+from raven_api.mapping import map_features
 
 etl_router = APIRouter(tags=["ETL"])
 indicators_router = APIRouter(tags=["Indicators"])
@@ -264,36 +264,33 @@ async def get_flood_frequency_analysis(
     return_periods: str = Query(
         default="2,20",
         description="Comma-separated list of return periods (e.g., '2,20,50')",
-        example="2,20"
+        example="2,20",
     ),
     dist: str = Query(
         default="auto",
         description="Distribution to fit "
         "( 'genextreme' , 'logpearson3' , 'lognormal' , "
-        "'gumbel', 'gamma' , 'normal', or 'auto' for best-fit)"
+        "'gumbel', 'gamma' , 'normal', or 'auto' for best-fit)",
     ),
     remove_outliers: bool = Query(
-        default=False,
-        description="Whether to remove outliers before fitting"
+        default=False, description="Whether to remove outliers before fitting"
     ),
     outlier_method: str = Query(
         default="iqr",
-        description="Outlier detection method "
-        "('iqr', 'zscore', 'modified_zscore')"
+        description="Outlier detection method " "('iqr', 'zscore', 'modified_zscore')",
     ),
     outlier_threshold: float = Query(
         default=1.5,
         description="Suggested thresholds for outlier detection: "
-        "IQR=1.5 (mild outlier), Z-score=3, Modified Z-score=3.5"
+        "IQR=1.5 (mild outlier), Z-score=3, Modified Z-score=3.5",
     ),
     min_years: int = Query(
-        default=5,
-        description="Minimum number of years required for analysis"
+        default=5, description="Minimum number of years required for analysis"
     ),
     selection_criteria: str = Query(
         default="aic",
         description="Criteria for selecting best distribution"
-        "('aic', 'bic', 'ks', 'rmse')"
+        "('aic', 'bic', 'ks', 'rmse')",
     ),
 ):
     """Fit Flood Frequency Analysis (FFA) using enhanced fit_ffa function."""
@@ -307,9 +304,9 @@ async def get_flood_frequency_analysis(
             end_date=commons["end_date"],
         )
 
-        rp_list = [int(
-            rp.strip()
-        ) for rp in return_periods.split(",") if rp.strip().isdigit()]
+        rp_list = [
+            int(rp.strip()) for rp in return_periods.split(",") if rp.strip().isdigit()
+        ]
 
         ffa_df = fit_ffa(
             peaks_df,
@@ -320,7 +317,7 @@ async def get_flood_frequency_analysis(
             outlier_method=outlier_method,
             outlier_threshold=outlier_threshold,
             selection_criteria=selection_criteria,
-            min_years=min_years
+            min_years=min_years,
         )
         return ffa_df.to_dict(orient="records")
     finally:
@@ -333,7 +330,7 @@ async def get_aggregate_flows(
     temporal_resolution: str = Query(
         "daily",
         description="Temporal resolution of the hydrograph."
-        "Choose from: 'daily', 'weekly', 'monthly', 'seasonal'."
+        "Choose from: 'daily', 'weekly', 'monthly', 'seasonal'.",
     ),
 ):
     """
@@ -348,7 +345,7 @@ async def get_aggregate_flows(
             sites=commons["sites"],
             start_date=commons["start_date"],
             end_date=commons["end_date"],
-            temporal_resolution=temporal_resolution
+            temporal_resolution=temporal_resolution,
         )
         return df.to_dict(orient="records")
     finally:
@@ -366,9 +363,7 @@ async def list_sites(
     con = get_conn()
     try:
         df = con.execute(
-            "SELECT DISTINCT site "
-            f"FROM '{parquet_src}' "
-            "ORDER BY site"
+            "SELECT DISTINCT site " f"FROM '{parquet_src}' " "ORDER BY site"
         ).fetchdf()
         return df["site"].tolist()
     finally:
