@@ -37,7 +37,7 @@ source venv/bin/activate  # On Windows use `venv\Scripts\activate`
 python -m pip install -e .
 
 # (Optional) Run the tests
-python -m unittest -v tests/test_indicators_with_real_data.py
+python -m unittest -v tests/test_indicators.py
 
 # Run the API
 uvicorn src.api.main:app --reload
@@ -83,13 +83,13 @@ http://0.0.0.0:8000/docs
 
 ## 🔌 API Endpoints
 
-### `POST /etl/init`
+### `POST /api/etl/init`
 
 Initialize the ETL process to convert a Raven output CSV to the internal Parquet format.
 
 - **Body Parameters**: `csv_path`, `output_path`
 
-### `GET /indicators/sites`
+### `GET /api/indicators/sites`
 
 List all available site names in a Parquet file.
 
@@ -104,18 +104,18 @@ All indicator endpoints accept these common query parameters for filtering:
 - `start_date` **(str, optional)**: Start date for filtering (`YYYY-MM-DD`).
 - `end_date` **(str, optional)**: End date for filtering (`YYYY-MM-DD`).
 
-| Endpoint                                       | Description                                                            | Specific Parameters                                                                                                   |
-| :--------------------------------------------- | :--------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------- |
-| **`GET /indicators/`**                         | Compute **all indicators** for the specified period or subperiods.     | `efn_threshold`, `break_point`                                                                                        |
-| **`GET /indicators/mean_annual_flow`**         | Mean annual flow.                                                      | `temporal_resolution` (`overall` or `annual`)                                                                         |
-| **`GET /indicators/mean_aug_sep_flow`**        | Mean August–September flow.                                            | `temporal_resolution` (`overall` or `annual`)                                                                         |
-| **`GET /indicators/peak_flow_timing`**         | Average day of year of annual peak flow.                               | `temporal_resolution` (`overall` or `annual`)                                                                         |
-| **`GET /indicators/days_below_efn`**           | Number of days below the Environmental Flow Needs threshold.           | `efn_threshold`, `temporal_resolution` (`overall` or `annual`)                                                        |
-| **`GET /indicators/annual_peaks`**             | Annual peak flows for each water year.                                 | -                                                                                                                     |
-| **`GET /indicators/peak_flows`**               | Mean annual peak flow.                                                 | -                                                                                                                     |
-| **`GET /indicators/weekly_flow_exceedance`**   | Weekly flow exceedance probabilities (P05 to P95).                     | -                                                                                                                     |
-| **`GET /indicators/flood_frequency_analysis`** | **Enhanced FFA** with configurable distributions and outlier handling. | `return_periods`, `dist`, `remove_outliers`, `outlier_method`, `outlier_threshold`, `min_years`, `selection_criteria` |
-| **`GET /indicators/aggregate_flows`**          | Get a hydrograph aggregated to a specified time resolution.            | `temporal_resolution` (`daily`, `weekly`, `monthly`, `seasonal`)                                                      |
+| Endpoint                                           | Description                                                            | Specific Parameters                                                                                                   |
+| :------------------------------------------------- | :--------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------- |
+| **`GET /api/indicators/`**                         | Compute **all indicators** for the specified period or subperiods.     | `efn_threshold`, `break_point`                                                                                        |
+| **`GET /api/indicators/mean_annual_flow`**         | Mean annual flow.                                                      | `temporal_resolution` (`overall` or `annual`)                                                                         |
+| **`GET /api/indicators/mean_aug_sep_flow`**        | Mean August–September flow.                                            | `temporal_resolution` (`overall` or `annual`)                                                                         |
+| **`GET /api/indicators/peak_flow_timing`**         | Average day of year of annual peak flow.                               | `temporal_resolution` (`overall` or `annual`)                                                                         |
+| **`GET /api/indicators/days_below_efn`**           | Number of days below the Environmental Flow Needs threshold.           | `efn_threshold`, `temporal_resolution` (`overall` or `annual`)                                                        |
+| **`GET /api/indicators/annual_peaks`**             | Annual peak flows for each water year.                                 | -                                                                                                                     |
+| **`GET /api/indicators/peak_flows`**               | Mean annual peak flow.                                                 | -                                                                                                                     |
+| **`GET /api/indicators/weekly_flow_exceedance`**   | Weekly flow exceedance probabilities (P05 to P95).                     | -                                                                                                                     |
+| **`GET /api/indicators/flood_frequency_analysis`** | **Enhanced FFA** with configurable distributions and outlier handling. | `return_periods`, `dist`, `remove_outliers`, `outlier_method`, `outlier_threshold`, `min_years`, `selection_criteria` |
+| **`GET /api/indicators/aggregate_flows`**          | Get a hydrograph aggregated to a specified time resolution.            | `temporal_resolution` (`daily`, `weekly`, `monthly`, `seasonal`)                                                      |
 
 ## 📂 Project Structure
 
@@ -151,13 +151,13 @@ The API expects Parquet files with the following schema:
 ### 1. Get a list of all available sites
 
 ```bash
-curl "http://127.0.0.1:8000/indicators/sites?parquet_src=/path/to/data.parquet"
+curl "http://127.0.0.1:8000/api/indicators/sites?parquet_src=/path/to/data.parquet"
 ```
 
 ### 2. Calculate all indicators for two sites, pre and post-2010
 
 ```bash
-curl "http://127.0.0.1:8000/indicators/?\
+curl "http://127.0.0.1:8000/api/indicators/?\
 parquet_src=/path/to/data.parquet\
 &sites=sub11004314 [m3/s]\
 &sites=sub11004315 [m3/s]\
@@ -168,7 +168,7 @@ parquet_src=/path/to/data.parquet\
 ### 3. Perform a Flood Frequency Analysis for a 100-year event using Log-Pearson III
 
 ```bash
-curl "http://127.0.0.1:8000/indicators/flood_frequency_analysis?\
+curl "http://127.0.0.1:8000/api/indicators/flood_frequency_analysis?\
 parquet_src=/path/to/data.parquet\
 &sites=sub11004314 [m3/s]\
 &return_periods=2,20,100\
@@ -180,7 +180,7 @@ parquet_src=/path/to/data.parquet\
 ### 4. Retrieve the daily aggregated hydrograph for a site
 
 ```bash
-curl "http://127.0.0.1:8000/indicators/aggregate_flows?\
+curl "http://127.0.0.1:8000/api/indicators/aggregate_flows?\
 parquet_src=/path/to/data.parquet\
 &sites=sub11004314 [m3/s]\
 &temporal_resolution=daily\
