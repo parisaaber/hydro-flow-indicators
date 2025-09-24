@@ -1,8 +1,7 @@
 from typing import Annotated, List, Optional
 from fastapi import APIRouter, Depends, Query
-from ..raven_api.etl import init_etl
-from ..raven_api.indicators import CXN
-from ..raven_api.indicators import (
+from raven_api.etl import init_etl
+from raven_api.indicators import (
     calculate_all_indicators,
     days_below_efn,
     fit_ffa,
@@ -16,6 +15,7 @@ from ..raven_api.indicators import (
     get_connection_status,
     reset_connection,
     configure_connection,
+    CXN,
 )
 from raven_api.mapping import map_features
 
@@ -29,10 +29,7 @@ connection_router = APIRouter(tags=["Connection"])
     "/init", description="Initialize the ETL process for a Raven output CSV."
 )
 async def initialize_etl(
-    csv_path: str,
-    output_path: str,
-    spatial_path: str = None,
-    join_column: str = None
+    csv_path: str, output_path: str, spatial_path: str = None, join_column: str = None
 ):
     init_etl(csv_path, output_path, spatial_path, join_column)
 
@@ -72,22 +69,15 @@ CommonsDep = Annotated[dict, Depends(common_parameters)]
 @connection_router.post("/configure")
 async def configure_global_connection(
     parquet_path: str = Query(..., description="Path to parquet file"),
-    sites: Optional[List[str]] = Query(
-        default=None,
-        description="Site IDs to filter"
-    ),
+    sites: Optional[List[str]] = Query(default=None, description="Site IDs to filter"),
     start_date: Optional[str] = Query(
         default=None, description="Start date (YYYY-MM-DD)"
     ),
-    end_date: Optional[str] = Query(
-        default=None, description="End date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(default=None, description="End date (YYYY-MM-DD)"),
 ):
     """Configure the global DuckDB connection with parquet file and filters"""
     configure_connection(
-        parquet_path=parquet_path,
-        sites=sites,
-        start_date=start_date,
-        end_date=end_date
+        parquet_path=parquet_path, sites=sites, start_date=start_date, end_date=end_date
     )
     return {
         "message": "Connection configured successfully",
@@ -121,8 +111,7 @@ async def get_indicators(
     return_periods: str = Query(
         default="2,20",
         description=(
-            "Comma-separated list of return periods for FFA "
-            "(e.g., '2,20,50')"
+            "Comma-separated list of return periods for FFA " "(e.g., '2,20,50')"
         ),
         example="2,20",
     ),
@@ -139,9 +128,7 @@ async def get_indicators(
     ),
     outlier_method: str = Query(
         default="iqr",
-        description=(
-            "Outlier detection method ('iqr', 'zscore', 'modified_zscore')"
-        ),
+        description=("Outlier detection method ('iqr', 'zscore', 'modified_zscore')"),
     ),
     outlier_threshold: float = Query(
         default=1.5,
@@ -157,8 +144,7 @@ async def get_indicators(
     selection_criteria: str = Query(
         default="aic",
         description=(
-            "Criteria for selecting best distribution"
-            "('aic', 'bic', 'ks', 'rmse')"
+            "Criteria for selecting best distribution" "('aic', 'bic', 'ks', 'rmse')"
         ),
     ),
     debug: bool = Query(
@@ -170,9 +156,7 @@ async def get_indicators(
 
     # Parse return periods
     rp_list = [
-        int(
-            rp.strip()
-            ) for rp in return_periods.split(",") if rp.strip().isdigit()
+        int(rp.strip()) for rp in return_periods.split(",") if rp.strip().isdigit()
     ]
 
     result_df = calculate_all_indicators(
@@ -303,8 +287,7 @@ async def get_flood_frequency_analysis(
     ),
     outlier_method: str = Query(
         default="iqr",
-        description="Outlier detection method "
-        "('iqr', 'zscore', 'modified_zscore')",
+        description="Outlier detection method " "('iqr', 'zscore', 'modified_zscore')",
     ),
     outlier_threshold: float = Query(
         default=1.5,
@@ -325,9 +308,7 @@ async def get_flood_frequency_analysis(
 
     # Parse return periods
     rp_list = [
-        int(
-            rp.strip()
-            ) for rp in return_periods.split(",") if rp.strip().isdigit()
+        int(rp.strip()) for rp in return_periods.split(",") if rp.strip().isdigit()
     ]
 
     # Call the CXN-based fit_ffa
