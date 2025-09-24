@@ -17,7 +17,7 @@ from ..raven_api.indicators import (
     reset_connection,
     configure_connection,
 )
-from src.raven_api.mapping import map_features
+from raven_api.mapping import map_features
 
 etl_router = APIRouter(tags=["ETL"])
 indicators_router = APIRouter(tags=["Indicators"])
