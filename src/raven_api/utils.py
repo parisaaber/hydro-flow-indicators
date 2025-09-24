@@ -1,6 +1,6 @@
 from typing import List, Dict, Tuple
-import pandas as pd
 import numpy as np
+import pandas as pd
 import scipy.stats as stats
 import duckdb
 from scipy.stats import (
@@ -9,8 +9,12 @@ from scipy.stats import (
 
 
 def detect_outliers_duckdb(
-    conn: duckdb.DuckDBPyConnection, table_name: str,
-    column: str, method: str = "iqr", threshold: float = 1.5
+    conn: duckdb.DuckDBPyConnection,
+    table_name: str,
+    column: str,
+    method: str = "iqr",
+    threshold: float = 1.5,
+    debug: bool = False
 ) -> str:
     """
     Generate SQL query for outlier detection using DuckDB.
@@ -284,13 +288,6 @@ def select_best_distribution(
         if not results:
             error_msg = (
                 "No distributions could be successfully fitted. Errors: "
-                + str(errors)
-                )
-            raise ValueError(error_msg)
-        # or
-        if not results:
-            error_msg = (
-                "No distributions could be successfully fitted. Errors: "
                 f"{errors}"
             )
             raise ValueError(error_msg)
@@ -397,4 +394,3 @@ def get_site_statistics_duckdb(
     ORDER BY site
     """
     return conn.execute(query).df()
-
