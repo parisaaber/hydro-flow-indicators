@@ -1,183 +1,73 @@
-from typing import Union, Optional, List
 import duckdb
+import hashlib
+from collections import OrderedDict
 
 
 class Connection:
-    parquet_view: Union[None, duckdb.DuckDBPyRelation] = None
-
-    def __init__(self):
+    def __init__(self, max_cached_parquets: int = 12):
         self.con = duckdb.connect(database=":memory:")
-        """
-        Initialize the connection to the DuckDB in-memory database.
 
-        This is used as the default connection for all queries.
-        """
-        self._parquet_path: Optional[str] = None
-        self._sites: Optional[List[str]] = None
-        self._start_date: Optional[str] = None
-        self._end_date: Optional[str] = None
-        self._views_created = set()  # Track created views
+        # Install and load httpfs
+        try:
+            self.con.install_extension("httpfs")
+        except Exception:
+            self.con.execute("INSTALL httpfs;")
+        try:
+            self.con.load_extension("httpfs")
+        except Exception:
+            self.con.execute("LOAD httpfs;")
 
-    def configure(
-        self,
-        parquet_path: Optional[str] = None,
-        sites: Optional[List[str]] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-    ):
-        """Configure the connection with commonly used parameters"""
-        if parquet_path:
-            self._parquet_path = parquet_path
-            # Create a main data view when parquet path is set
-            self.create_main_data_view()
+        self._dataset_views: "OrderedDict[str, str]" = (
+            OrderedDict()
+        )  # parquet_path -> view_name
+        self._max_cached = max_cached_parquets
 
-        if sites is not None:
-            self._sites = sites
+    def _view_name_for(self, parquet_path: str) -> str:
+        # Stable identifier per path
+        h = hashlib.sha1(parquet_path.encode("utf-8")).hexdigest()[:12]
+        return f"ds_{h}_main"
 
-        if start_date:
-            self._start_date = start_date
+    def get_or_create_main_view(self, parquet_path: str) -> str:
+        if parquet_path in self._dataset_views:
+            view_name = self._dataset_views.pop(parquet_path)
+            self._dataset_views[parquet_path] = view_name
+            return view_name
 
-        if end_date:
-            self._end_date = end_date
-        self.create_filtered_data_view()
-
-    def create_main_data_view(self):
-        if not self._parquet_path:
-            raise ValueError("Parquet path must be configured first")
-
-        view_name = "main_data"
-        if view_name not in self._views_created:
-            query = f"""
-                CREATE OR REPLACE VIEW {view_name} AS
-                SELECT*
-                FROM parquet_scan('{self._parquet_path}')
-            """
-            self.con.execute(query)
-            self._views_created.add(view_name)
-
-        return view_name
-
-    def create_filtered_data_view(self, view_name: str = "filtered_data"):
-        """
-        Create a filtered data view with optional site/date filters.
-        """
-        # Ensure main_data view exists first
-        if "main_data" not in self._views_created:
-            if not self._parquet_path:
-                raise ValueError("Parquet path must be configured first")
-            self.create_main_data_view()
-
-        filters = []
-        if self._sites:
-            # Properly escape and quote site names
-            quoted_sites = (
-                [f"'{site.replace("'", "''")}'" for site in self._sites]
-                )
-            if len(quoted_sites) == 1:
-                filters.append(f"site = {quoted_sites[0]}")
-            else:
-                sites_list = ", ".join(quoted_sites)
-                filters.append(f"site IN ({sites_list})")
-        if self._start_date and self._end_date:
-            filters.append(
-                f"date BETWEEN '{self._start_date}' AND '{self._end_date}'"
-                )
-
-        where_clause = " AND ".join(filters) if filters else "1=1"
-
-        self.con.execute(f"""
+        view_name = self._view_name_for(parquet_path)
+        # Create/replace the view for this dataset
+        esc = parquet_path.replace("'", "''")
+        self.con.execute(
+            f"""
             CREATE OR REPLACE VIEW {view_name} AS
-            SELECT *
-            FROM main_data
-            WHERE {where_clause}
-        """)
+            SELECT * FROM parquet_scan('{esc}')
+        """
+        )
 
-        self._views_created.add(view_name)
+        # cache insert
+        self._dataset_views[parquet_path] = view_name
+        if len(self._dataset_views) > self._max_cached:
+            # evict oldest
+            old_path, old_view = self._dataset_views.popitem(last=False)
+            try:
+                self.con.execute(f"DROP VIEW IF EXISTS {old_view}")
+            except Exception:
+                pass
         return view_name
-
-    def create_common_views(self):
-        """Create commonly used aggregated views for performance"""
-        # Ensure main_data view exists first
-        if "main_data" not in self._views_created:
-            if not self._parquet_path:
-                raise ValueError("Parquet path must be configured first")
-            self.create_main_data_view()
-
-        # Mean annual flow per site view -
-        maf_view = """
-            CREATE OR REPLACE VIEW mean_annual_flows AS
-            WITH yearly_means AS (
-                SELECT site, water_year, AVG(value) AS maf_per_year
-                FROM main_data
-                WHERE value IS NOT NULL
-                GROUP BY site, water_year
-            )
-            SELECT site, AVG(maf_per_year) AS mean_annual_flow
-            FROM yearly_means
-            GROUP BY site
-        """
-        self.con.execute(maf_view)
-        self._views_created.add("mean_annual_flows")
-
-        # Annual maximums view - SIMPLIFIED: main_data now has water_year
-        annual_max_view = """
-            CREATE OR REPLACE VIEW annual_maximums AS
-            SELECT site, water_year, MAX(value) as annual_max
-            FROM main_data
-            WHERE value IS NOT NULL
-            GROUP BY site, water_year
-        """
-        self.con.execute(annual_max_view)
-        self._views_created.add("annual_maximums")
-
-        # Daily statistics view
-        daily_stats_view = """
-            CREATE OR REPLACE VIEW daily_statistics AS
-            SELECT
-                site,
-                date,
-                value,
-                water_year,
-                EXTRACT(month FROM date) as month,
-                EXTRACT(dayofyear FROM date) as day_of_year
-            FROM main_data
-            WHERE value IS NOT NULL
-        """
-        self.con.execute(daily_stats_view)
-        self._views_created.add("daily_statistics")
 
     def execute(self, query: str):
-        """Execute query on the connection"""
         return self.con.execute(query)
 
-    def get_available_views(self) -> List[str]:
-        """Get list of available views"""
-        return list(self._views_created)
-
-    def get_config(self) -> dict:
-        """Get current configuration"""
-        return {
-            "parquet_path": self._parquet_path,
-            "sites": self._sites,
-            "start_date": self._start_date,
-            "end_date": self._end_date,
-            "available_views": list(self._views_created),
-        }
-
-    def reset_config(self):
-        """Reset configuration and drop created views"""
-        for view in self._views_created:
+    def reset(self):
+        # Drop all cached views
+        for _, v in list(self._dataset_views.items()):
             try:
-                self.con.execute(f"DROP VIEW IF EXISTS {view}")
+                self.con.execute(f"DROP VIEW IF EXISTS {v}")
             except Exception:
-                pass  # View might not exist
-
-        self._views_created.clear()
-        self._parquet_path = None
-        self._sites = None
-        self._start_date = None
-        self._end_date = None
+                pass
+        self._dataset_views.clear()
 
     def __del__(self):
-        if hasattr(self, "con"):
+        try:
             self.con.close()
+        except Exception:
+            pass

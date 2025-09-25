@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import warnings
+import uuid
 from typing import List, Optional
 
 import numpy as np
@@ -16,400 +19,419 @@ from .utils import (
 CXN = Connection()
 
 
-def mean_annual_flow(temporal_resolution: str = "overall") -> pd.DataFrame:
+# ---------- helpers ----------
+
+
+def _where_clause(
+    sites: Optional[List[str]],
+    start_date: Optional[str],
+    end_date: Optional[str],
+) -> str:
+    parts: List[str] = []
+    if sites:
+        qs = ", ".join("'" + s.replace("'", "''") + "'" for s in sites)
+        parts.append(f"site IN ({qs})")
+    if start_date and end_date:
+        parts.append(f"date BETWEEN '{start_date}' AND '{end_date}'")
+    return " AND ".join(parts) if parts else "1=1"
+
+
+def _filtered_cte(
+    parquet_path: str,
+    sites: Optional[List[str]],
+    start_date: Optional[str],
+    end_date: Optional[str],
+) -> str:
     """
-    Calculate mean annual flow using the globally configured CXN.
-    Assumes CXN has already been configured via /configure endpoint.
+    Build a common table expression header that selects from the cached main view for this parquet,
+    applying request-scoped filters. No global mutable state involved.
     """
-    filtered_view = CXN.create_filtered_data_view("temp_annual_view")
+    main = CXN.get_or_create_main_view(parquet_path)
+    where_clause = _where_clause(sites, start_date, end_date)
+    return f"WITH filtered AS (SELECT * FROM {main} WHERE {where_clause})"
+
+
+# ---------- indicators ----------
+
+
+def mean_annual_flow(
+    parquet_path: str,
+    temporal_resolution: str = "overall",
+    *,
+    sites: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> pd.DataFrame:
+    cte = _filtered_cte(parquet_path, sites, start_date, end_date)
     if temporal_resolution == "annual":
-        query = f"""
-            SELECT site, water_year, AVG(value) AS mean_annual_flow
-            FROM {filtered_view}
+        q = f"""
+        {cte}
+        SELECT site, water_year, AVG(value) AS mean_annual_flow
+        FROM filtered
+        WHERE value IS NOT NULL
+        GROUP BY site, water_year
+        ORDER BY site, water_year
+        """
+    else:
+        q = f"""
+        {cte},
+        yearly_means AS (
+            SELECT site, water_year, AVG(value) AS maf_per_year
+            FROM filtered
             WHERE value IS NOT NULL
             GROUP BY site, water_year
-            ORDER BY site, water_year
+        )
+        SELECT site, AVG(maf_per_year) AS mean_annual_flow
+        FROM yearly_means
+        GROUP BY site
+        ORDER BY site
+        """
+    return CXN.execute(q).fetchdf()
+
+
+def mean_aug_sep_flow(
+    parquet_path: str,
+    temporal_resolution: str = "overall",
+    *,
+    sites: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> pd.DataFrame:
+    cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    if temporal_resolution == "annual":
+        q = f"""
+        {cte}
+        SELECT site, water_year, AVG(value) AS mean_aug_sep_flow
+        FROM filtered
+        WHERE EXTRACT(month FROM date) IN (8, 9)
+        GROUP BY site, water_year
+        ORDER BY site, water_year
         """
     else:
-        query = f"""
-            WITH yearly_means AS (
-                SELECT site, water_year, AVG(value) AS maf_per_year
-                FROM {filtered_view}
-                WHERE value IS NOT NULL
-                GROUP BY site, water_year
-            )
-            SELECT site, AVG(maf_per_year) AS mean_annual_flow
-            FROM yearly_means
-            GROUP BY site
-            ORDER BY site
-        """
-    return CXN.execute(query).fetchdf()
-
-
-def mean_aug_sep_flow(temporal_resolution: str = "overall") -> pd.DataFrame:
-    """
-    Calculate mean August–September flow using globally configured CXN.
-    Assumes CXN has already been configured via /configure endpoint.
-    """
-    if temporal_resolution == "annual":
-        filtered_view = CXN.create_filtered_data_view("temp_aug_sep_view")
-        query = f"""
-            SELECT site, water_year, AVG(value) AS mean_aug_sep_flow
-            FROM {filtered_view}
+        q = f"""
+        {cte},
+        aug_sep AS (
+            SELECT site, water_year, AVG(value) AS avg_aug_sep_flow
+            FROM filtered
             WHERE EXTRACT(month FROM date) IN (8, 9)
             GROUP BY site, water_year
-            ORDER BY site, water_year
+        )
+        SELECT site, AVG(avg_aug_sep_flow) AS mean_aug_sep_flow
+        FROM aug_sep
+        GROUP BY site
+        ORDER BY site
+        """
+    return CXN.execute(q).fetchdf()
+
+
+def peak_flow_timing(
+    parquet_path: str,
+    temporal_resolution: str = "overall",
+    *,
+    sites: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> pd.DataFrame:
+    cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    if temporal_resolution == "annual":
+        q = f"""
+        {cte},
+        ranked_flows AS (
+            SELECT site, water_year, value,
+                   EXTRACT(doy FROM date) AS doy,
+                   ROW_NUMBER() OVER (PARTITION BY site, water_year ORDER BY value DESC) AS rn
+            FROM filtered
+        )
+        SELECT site, water_year, doy AS peak_flow_timing
+        FROM ranked_flows
+        WHERE rn = 1
+        ORDER BY site, water_year
         """
     else:
-        filtered_view = CXN.create_filtered_data_view("temp_aug_sep_view")
-        query = f"""
-            WITH aug_sep AS (
-                SELECT site, water_year, AVG(value) AS avg_aug_sep_flow
-                FROM {filtered_view}
-                WHERE EXTRACT(month FROM date) IN (8, 9)
-                GROUP BY site, water_year
-            )
-            SELECT site, AVG(avg_aug_sep_flow) AS mean_aug_sep_flow
-            FROM aug_sep
-            GROUP BY site
-            ORDER BY site
-        """
-    return CXN.execute(query).fetchdf()
-
-
-def peak_flow_timing(temporal_resolution: str = "overall") -> pd.DataFrame:
-    """
-    Estimate the average day of year of annual peak flow using global CXN.
-    """
-    filtered_view = CXN.create_filtered_data_view("temp_peak_flow_view")
-
-    if temporal_resolution == "annual":
-        query = f"""
-            WITH ranked_flows AS (
-                SELECT site, water_year, value,
-                EXTRACT(doy FROM date) AS doy,
-                ROW_NUMBER() OVER (
-                PARTITION BY site, water_year
-                ORDER BY value DESC
-                ) AS rn
-                FROM {filtered_view}
-            )
-            SELECT site, water_year, doy AS peak_flow_timing
+        q = f"""
+        {cte},
+        ranked_flows AS (
+            SELECT site, water_year, value,
+                   EXTRACT(doy FROM date) AS doy,
+                   ROW_NUMBER() OVER (PARTITION BY site, water_year ORDER BY value DESC) AS rn
+            FROM filtered
+        ),
+        annual_peaks AS (
+            SELECT site, water_year, doy
             FROM ranked_flows
             WHERE rn = 1
-            ORDER BY site, water_year
+        )
+        SELECT site, AVG(doy) AS peak_flow_timing
+        FROM annual_peaks
+        GROUP BY site
+        ORDER BY site
         """
-    else:
-        query = f"""
-            WITH ranked_flows AS (
-                SELECT site, water_year, value,
-                EXTRACT(doy FROM date) AS doy,
-                ROW_NUMBER() OVER (
-                PARTITION BY site, water_year
-                ORDER BY value DESC
-                ) AS rn
-                FROM {filtered_view}
-            ),
-            annual_peaks AS (
-                SELECT site, water_year, doy
-                FROM ranked_flows
-                WHERE rn = 1
-            )
-            SELECT site, AVG(doy) AS peak_flow_timing
-            FROM annual_peaks
-            GROUP BY site
-            ORDER BY site
-        """
-    return CXN.execute(query).fetchdf()
+    return CXN.execute(q).fetchdf()
 
 
 def days_below_efn(
-    EFN_threshold: float, temporal_resolution: str = "overall"
+    parquet_path: str,
+    EFN_threshold: float,
+    temporal_resolution: str = "overall",
+    *,
+    sites: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
 ) -> pd.DataFrame:
-    """
-    Calculate days below EFN threshold using globally configured CXN.
-    """
-    filtered_view = CXN.create_filtered_data_view("temp_efn_view")
-
-    query = f"""
-        WITH mean_annual AS (
-            SELECT site, water_year, AVG(value) AS maf_year
-            FROM {filtered_view}
-            GROUP BY site, water_year
-        ),
-        mean_annual_site AS (
-            SELECT site, AVG(maf_year) AS maf_site
-            FROM mean_annual
-            GROUP BY site
-        ),
-        daily_with_threshold AS (
-            SELECT p.site, p.water_year, p.value,
-                   m.maf_site, m.maf_site * {EFN_threshold} AS threshold
-            FROM {filtered_view} p
-            JOIN mean_annual_site m ON p.site = m.site
-        )
+    cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    base = f"""
+    {cte},
+    mean_annual AS (
+        SELECT site, water_year, AVG(value) AS maf_year
+        FROM filtered
+        GROUP BY site, water_year
+    ),
+    mean_annual_site AS (
+        SELECT site, AVG(maf_year) AS maf_site
+        FROM mean_annual
+        GROUP BY site
+    ),
+    daily_with_threshold AS (
+        SELECT p.site, p.water_year, p.value,
+               m.maf_site, m.maf_site * {EFN_threshold} AS threshold
+        FROM filtered p
+        JOIN mean_annual_site m ON p.site = m.site
+    )
     """
     if temporal_resolution == "annual":
-        query += """
-            ,
-            days_below AS (
-                SELECT site, water_year,
-                COUNT(*) FILTER (WHERE value < threshold) AS days_below_efn
-                FROM daily_with_threshold
-                GROUP BY site, water_year
-            )
-            SELECT site, water_year, days_below_efn
-            FROM days_below
-            ORDER BY site, water_year
+        q = f"""
+        {base},
+        days_below AS (
+            SELECT site, water_year,
+                   COUNT(*) FILTER (WHERE value < threshold) AS days_below_efn
+            FROM daily_with_threshold
+            GROUP BY site, water_year
+        )
+        SELECT site, water_year, days_below_efn
+        FROM days_below
+        ORDER BY site, water_year
         """
     else:
-        query += """
-            ,
-            days_below AS (
-                SELECT site, water_year,
-                COUNT(*) FILTER (WHERE value < threshold) AS days_below_efn
-                FROM daily_with_threshold
-                GROUP BY site, water_year
-            )
-            SELECT site, AVG(days_below_efn) AS days_below_efn
-            FROM days_below
-            GROUP BY site
-            ORDER BY site
+        q = f"""
+        {base},
+        days_below AS (
+            SELECT site, water_year,
+                   COUNT(*) FILTER (WHERE value < threshold) AS days_below_efn
+            FROM daily_with_threshold
+            GROUP BY site, water_year
+        )
+        SELECT site, AVG(days_below_efn) AS days_below_efn
+        FROM days_below
+        GROUP BY site
+        ORDER BY site
         """
-    return CXN.execute(query).fetchdf()
+    return CXN.execute(q).fetchdf()
 
 
-def annual_peaks(temporal_resolution: str = "overall") -> pd.DataFrame:
-    """
-    Extract annual peak flow for each site and water year
-    using globally configured CXN.
-
-    Args:
-        temporal_resolution: 'overall' for average peak per site,
-                            'annual' for per water year values.
-
-    Returns:
-        DataFrame with 'site', 'water_year' (if annual),
-        and 'annual_peak' columns.
-    """
-    filtered_view = CXN.create_filtered_data_view("temp_annual_peaks_view")
-
+def annual_peaks(
+    parquet_path: str,
+    temporal_resolution: str = "overall",
+    *,
+    sites: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> pd.DataFrame:
+    cte = _filtered_cte(parquet_path, sites, start_date, end_date)
     if temporal_resolution == "annual":
-        query = f"""
+        q = f"""
+        {cte}
+        SELECT site, water_year, MAX(value) AS annual_peak
+        FROM filtered
+        WHERE value IS NOT NULL
+        GROUP BY site, water_year
+        ORDER BY site, water_year
+        """
+    else:
+        q = f"""
+        {cte},
+        annual_peaks AS (
             SELECT site, water_year, MAX(value) AS annual_peak
-            FROM {filtered_view}
+            FROM filtered
             WHERE value IS NOT NULL
             GROUP BY site, water_year
-            ORDER BY site, water_year
+        )
+        SELECT site, AVG(annual_peak) AS annual_peak
+        FROM annual_peaks
+        GROUP BY site
+        ORDER BY site
         """
-    else:
-        query = f"""
-            WITH annual_peaks AS (
-                SELECT site, water_year, MAX(value) AS annual_peak
-                FROM {filtered_view}
-                WHERE value IS NOT NULL
-                GROUP BY site, water_year
-            )
-            SELECT site, AVG(annual_peak) AS annual_peak
-            FROM annual_peaks
-            GROUP BY site
-            ORDER BY site
-        """
-
-    return CXN.execute(query).fetchdf()
+    return CXN.execute(q).fetchdf()
 
 
 def fit_ffa(
+    parquet_path: str,
     dist: str = "auto",
     return_periods: List[int] = [2, 20],
     remove_outliers: bool = False,
     outlier_method: str = "iqr",
     outlier_threshold: float = 1.5,
-    available_distributions: List[str] = [
-        "gumbel",
-        "genextreme",
-        "normal",
-        "lognormal",
-        "gamma",
-        "logpearson3",
-    ],
+    available_distributions: List[str] = (
+        ["gumbel", "genextreme", "normal", "lognormal", "gamma", "logpearson3"]
+    ),
     selection_criteria: str = "aic",
     min_years: int = 5,
+    *,
+    sites: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     debug: bool = False,
 ) -> pd.DataFrame:
     """
-    Flood Frequency Analysis using CXN/SQL-heavy approach.
-    Matches original version output and logic.
+    FFA using request-scoped CTE and a unique TEMP view (no collisions).
     """
-    # 1️⃣ Create filtered data view for peaks
-    filtered_view = CXN.create_filtered_data_view("temp_peak_flows_view")
+    cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    temp_view = f"temp_annual_peaks_{uuid.uuid4().hex[:8]}"
 
-    # 2️⃣ Create a SQL view for annual peaks per site/year
     CXN.con.execute(
         f"""
-        CREATE OR REPLACE VIEW temp_annual_peaks AS
+        CREATE OR REPLACE TEMP VIEW {temp_view} AS
+        {cte}
         SELECT site, water_year, MAX(value) AS annual_peak
-        FROM {filtered_view}
+        FROM filtered
         WHERE value IS NOT NULL
         GROUP BY site, water_year
-    """
+        """
     )
 
-    # 3️⃣ Get site counts to filter sites with enough data
-    site_counts_df = CXN.execute(
-        f"""
-        SELECT site, COUNT(*) AS n_years
-        FROM temp_annual_peaks
-        GROUP BY site
-        HAVING COUNT(*) >= {min_years}
-    """
-    ).fetchdf()
-
-    if site_counts_df.empty:
-        warnings.warn(f"No sites have at least {min_years} years of data.")
-        return pd.DataFrame()
-
-    valid_sites = site_counts_df["site"].tolist()
-
-    # 4️⃣ Prepare site statistics via SQL
-    site_stats_df = get_site_statistics_duckdb(
-        CXN.con, "temp_annual_peaks"
-    ).set_index("site")
-
-    results = []
-
-    for site in valid_sites:
-        # 5️⃣ Extract site data via SQL
-        site_data = CXN.execute(
+    try:
+        site_counts_df = CXN.execute(
             f"""
-            SELECT *
-            FROM temp_annual_peaks
-            WHERE site = '{site}'
-            ORDER BY water_year
-        """
+            SELECT site, COUNT(*) AS n_years
+            FROM {temp_view}
+            GROUP BY site
+            HAVING COUNT(*) >= {min_years}
+            """
         ).fetchdf()
 
-        values = site_data["annual_peak"].values
-        outliers_removed = 0
+        if site_counts_df.empty:
+            warnings.warn(f"No sites have at least {min_years} years of data.")
+            return pd.DataFrame()
 
-        # 6️⃣ Remove outliers using SQL view if requested
-        if remove_outliers:
-            CXN.con.register("temp_site_data", site_data)
-            outlier_query = detect_outliers_duckdb(
-                CXN.con,
-                "temp_site_data",
-                "annual_peak",
-                outlier_method,
-                outlier_threshold,
-                debug=debug,
-            )
-            site_data = CXN.execute(outlier_query).fetchdf()
-            outliers_removed = int(site_data["is_outlier"].sum())
-            values = site_data.loc[
-                ~site_data["is_outlier"], "annual_peak"
-            ].values
+        valid_sites = site_counts_df["site"].tolist()
+        site_stats_df = get_site_statistics_duckdb(CXN.con, temp_view).set_index("site")
 
-            if len(values) < min_years:
-                warnings.warn(
-                    f"Site {site}: Not enough data after outlier removal"
+        results = []
+        for site in valid_sites:
+            site_q = f"""
+                SELECT *
+                FROM {temp_view}
+                WHERE site = '{site.replace("'", "''")}'
+                ORDER BY water_year
+            """
+            site_data = CXN.execute(site_q).fetchdf()
+            values = site_data["annual_peak"].values
+            outliers_removed = 0
+
+            if remove_outliers:
+                CXN.con.register("temp_site_data", site_data)
+                outlier_query = detect_outliers_duckdb(
+                    "temp_site_data",
+                    "annual_peak",
+                    outlier_method,
+                    outlier_threshold,
                 )
-                continue
-
-        # 7️⃣ Distribution fitting in Python
-        try:
-            if dist == "auto":
-                best_dist, best_params = select_best_distribution(
-                    values, available_distributions, selection_criteria
-                )
-            else:
-                best_dist = dist
-                best_params, _ = fit_distribution(values, dist)
-                if best_params is None:
-                    warnings.warn(
-                        f"Site {site}: Could not fit {dist} distribution"
-                    )
+                site_data = CXN.execute(outlier_query).fetchdf()
+                outliers_removed = int(site_data["is_outlier"].sum())
+                values = site_data.loc[~site_data["is_outlier"], "annual_peak"].values
+                if len(values) < min_years:
+                    warnings.warn(f"Site {site}: Not enough data after outlier removal")
                     continue
 
-            # 8️⃣ Return period values in Python
-            rp_values = calculate_return_period_values(
-                best_dist, best_params, return_periods
-            )
+            try:
+                if dist == "auto":
+                    best_dist, best_params = select_best_distribution(
+                        values, available_distributions, selection_criteria
+                    )
+                else:
+                    best_dist = dist
+                    best_params, _ = fit_distribution(values, dist)
+                    if best_params is None:
+                        warnings.warn(f"Site {site}: Could not fit {dist} distribution")
+                        continue
 
-            # 9️⃣ Pull site statistics from DuckDB
-            site_stats = site_stats_df.loc[site].to_dict()
+                rp_vals = calculate_return_period_values(
+                    best_dist, best_params, return_periods
+                )
+                site_stats = site_stats_df.loc[site].to_dict()
 
-            # 1️⃣0️⃣ Compile final result for this site
-            site_result = {
-                "site": site,
-                "best_distribution": best_dist,
-                "outliers_removed": outliers_removed,
-                "data_years": len(values),
-            }
-            site_result.update(site_stats)
-            site_result.update(rp_values)
-            results.append(site_result)
+                row = {
+                    "site": site,
+                    "best_distribution": best_dist,
+                    "outliers_removed": outliers_removed,
+                    "data_years": len(values),
+                }
+                row.update(site_stats)
+                row.update(rp_vals)
+                results.append(row)
 
-        except Exception as e:
-            warnings.warn(f"Site {site}: Error in FFA - {e}")
-            if debug:
-                print(f"Error site {site}: {e}")
-            continue
+            except Exception as e:
+                warnings.warn(f"Site {site}: Error in FFA - {e}")
+                if debug:
+                    print(f"Error site {site}: {e}")
+                continue
 
-    if not results:
-        warnings.warn("No sites could be successfully analyzed.")
-        return pd.DataFrame()
+        if not results:
+            warnings.warn("No sites could be successfully analyzed.")
+            return pd.DataFrame()
 
-    # 1️⃣1️⃣ Convert to DataFrame and add SQL-based ranking
-    results_df = pd.DataFrame(results)
-    CXN.con.register("results_data", results_df)
-    final_results = CXN.execute(
-        """
-        SELECT *,
-            RANK() OVER (ORDER BY mean_flow DESC) AS flow_rank
-        FROM results_data
-        ORDER BY flow_rank
-    """
-    ).fetchdf()
+        results_df = pd.DataFrame(results)
+        CXN.con.register("results_data", results_df)
+        final_results = CXN.execute(
+            """
+            SELECT *,
+                   RANK() OVER (ORDER BY mean_flow DESC) AS flow_rank
+            FROM results_data
+            ORDER BY flow_rank
+            """
+        ).fetchdf()
+        return final_results
 
-    return final_results
-
-
-def peak_flows() -> pd.DataFrame:
-    """
-    Calculate mean annual peak flow for each site
-    using the globally configured CXN.
-
-    Returns:
-        DataFrame with 'site' and 'mean_annual_peak' columns.
-    """
-    filtered_view = CXN.create_filtered_data_view("temp_peak_flows_view")
-    query = f"""
-        WITH annual_peaks AS (
-            SELECT site, water_year, MAX(value) AS annual_peak
-            FROM {filtered_view}
-            WHERE value IS NOT NULL
-            GROUP BY site, water_year
-        )
-        SELECT site, AVG(annual_peak) AS mean_annual_peak
-        FROM annual_peaks
-        GROUP BY site
-        ORDER BY site
-    """
-    return CXN.execute(query).fetchdf()
+    finally:
+        try:
+            CXN.execute(f"DROP VIEW IF EXISTS {temp_view}")
+        except Exception:
+            pass
 
 
-def weekly_flow_exceedance() -> pd.DataFrame:
-    """
-    Compute weekly flow exceedance for the specified sites
-    and period using the globally configured CXN.
-
-    Returns:
-        DataFrame with weekly flow exceedance percentiles for each site.
-    """
-    filtered_view = CXN.create_filtered_data_view(
-        "temp_weekly_exceedance_view"
+def peak_flows(
+    parquet_path: str,
+    *,
+    sites: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> pd.DataFrame:
+    cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    q = f"""
+    {cte},
+    annual_peaks AS (
+        SELECT site, water_year, MAX(value) AS annual_peak
+        FROM filtered
+        WHERE value IS NOT NULL
+        GROUP BY site, water_year
     )
-    query = f"""
+    SELECT site, AVG(annual_peak) AS mean_annual_peak
+    FROM annual_peaks
+    GROUP BY site
+    ORDER BY site
+    """
+    return CXN.execute(q).fetchdf()
+
+
+def weekly_flow_exceedance(
+    parquet_path: str,
+    *,
+    sites: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> pd.DataFrame:
+    cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    q = f"""
+    {cte}
     SELECT
         site,
         CAST(strftime('%W', date) AS INTEGER) AS week,
@@ -422,113 +444,84 @@ def weekly_flow_exceedance() -> pd.DataFrame:
         quantile_cont(value, 0.30) AS p70,
         quantile_cont(value, 0.20) AS p80,
         quantile_cont(value, 0.05) AS p95
-    FROM {filtered_view}
+    FROM filtered
     WHERE value IS NOT NULL
-    GROUP BY
-        site,
-        CAST(strftime('%W', date) AS INTEGER)
+    GROUP BY site, CAST(strftime('%W', date) AS INTEGER)
     ORDER BY site, week
     """
-    return CXN.execute(query).fetchdf()
+    return CXN.execute(q).fetchdf()
 
 
 def calculate_all_indicators(
+    parquet_path: str,
     EFN_threshold: float = 0.2,
     return_periods: List[int] = [2, 20],
     remove_outliers: bool = False,
     outlier_method: str = "iqr",
     outlier_threshold: float = 1.5,
     dist: str = "auto",
-    available_distributions: List[str] = [
-        "gumbel",
-        "genextreme",
-        "normal",
-        "lognormal",
-        "gamma",
-        "logpearson3",
-    ],
+    available_distributions: List[str] = (
+        ["gumbel", "genextreme", "normal", "lognormal", "gamma", "logpearson3"]
+    ),
     selection_criteria: str = "aic",
     min_years: int = 5,
     debug: bool = False,
+    *,
+    sites: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
 ) -> pd.DataFrame:
     """
-    Calculate a comprehensive set of hydrologic indicators
-    for one or more subperiods
-    using the globally configured CXN.
-
-    Indicators include:
-    - Mean annual flow
-    - August-September mean flow
-    - Peak flow timing (DOY)
-    - Number of days below EFN threshold
-    - Mean annual peak flow
-    - Flood frequency analysis with return period quantiles
-
-    Args:
-        EFN_threshold: Proportion of MAF used for
-        low flow threshold (e.g., 0.2).
-        return_periods: List of return periods for flood frequency analysis.
-        remove_outliers: Whether to remove outliers in FFA.
-        outlier_method: Method for outlier detection
-        ('iqr', 'zscore', 'modified_zscore').
-        outlier_threshold: Threshold for outlier detection.
-        dist: Distribution for FFA ('auto' or specific distribution name).
-        available_distributions: List of distributions to test if dist='auto'.
-        selection_criteria: Criteria for distribution selection
-        ('aic', 'bic', 'ks').
-        min_years: Minimum years required for analysis.
-        debug: Enable debug output.
-
-    Returns:
-        DataFrame containing calculated indicators for each site and subperiod.
+    Compute the full indicator set from a request-scoped filtered subset.
     """
-    # Get the current configuration to understand the data structure
-    config = CXN.get_config()
-    if not config.get("parquet_path"):
-        raise RuntimeError(
-            "CXN connection not configured. Please run CXN.configure() first."
-        )
-
     try:
-        if debug:
-            print("Calculating mean annual flow...")
-        maf = mean_annual_flow(temporal_resolution="overall").set_index("site")
-
-        if debug:
-            print("Calculating mean August-September flow...")
-        aug_sep = mean_aug_sep_flow(temporal_resolution="overall").set_index(
-            "site"
-        )
-
-        if debug:
-            print("Calculating peak flow timing...")
-        timing = peak_flow_timing(temporal_resolution="overall").set_index(
-            "site"
-        )
-
-        if debug:
-            print("Calculating days below EFN...")
-        efn_days = days_below_efn(
-            EFN_threshold, temporal_resolution="overall"
+        maf = mean_annual_flow(
+            parquet_path,
+            "overall",
+            sites=sites,
+            start_date=start_date,
+            end_date=end_date,
         ).set_index("site")
-
-        if debug:
-            print("Calculating mean annual peaks...")
-        peaks = peak_flows().set_index("site")
+        aug_sep = mean_aug_sep_flow(
+            parquet_path,
+            "overall",
+            sites=sites,
+            start_date=start_date,
+            end_date=end_date,
+        ).set_index("site")
+        timing = peak_flow_timing(
+            parquet_path,
+            "overall",
+            sites=sites,
+            start_date=start_date,
+            end_date=end_date,
+        ).set_index("site")
+        efn_days = days_below_efn(
+            parquet_path,
+            EFN_threshold,
+            "overall",
+            sites=sites,
+            start_date=start_date,
+            end_date=end_date,
+        ).set_index("site")
+        peaks = peak_flows(
+            parquet_path, sites=sites, start_date=start_date, end_date=end_date
+        ).set_index("site")
 
         indicators = pd.concat([maf, aug_sep, timing, efn_days, peaks], axis=1)
 
-        if debug:
-            print("Performing flood frequency analysis...")
         ffa = fit_ffa(
+            parquet_path,
             dist=dist,
             return_periods=return_periods,
             remove_outliers=remove_outliers,
             outlier_method=outlier_method,
             outlier_threshold=outlier_threshold,
-            available_distributions=available_distributions,
             selection_criteria=selection_criteria,
             min_years=min_years,
+            sites=sites,
+            start_date=start_date,
+            end_date=end_date,
             debug=debug,
         )
 
@@ -555,10 +548,9 @@ def calculate_all_indicators(
             print(f"Error: {e}")
         return pd.DataFrame()
 
-    # Clean up infinities and NaNs
+    # sanitize NaNs/Infs
     final_df = final_df.replace([np.inf, -np.inf, np.nan], None)
 
-    # Reorder columns
     base_cols = ["site", "efn_threshold"]
     indicator_cols = [
         "mean_annual_flow",
@@ -578,31 +570,26 @@ def calculate_all_indicators(
         "flow_rank",
     ]
 
-    ordered_cols = base_cols + indicator_cols + rp_cols + ffa_meta_cols
-    final_cols = [c for c in ordered_cols if c in final_df.columns]
-    remaining_cols = [c for c in final_df.columns if c not in final_cols]
-    final_cols.extend(remaining_cols)
+    ordered = base_cols + indicator_cols + rp_cols + ffa_meta_cols
+    final_cols = [c for c in ordered if c in final_df.columns]
+    remaining = [c for c in final_df.columns if c not in final_cols]
+    final_cols.extend(remaining)
 
     final_df = final_df[final_cols]
-
     if debug:
-        print(
-            f"\nFinal results: {len(final_df)} rows,"
-            f" {len(final_df.columns)} columns"
-        )
+        print(f"\nFinal results: {len(final_df)} rows, {len(final_df.columns)} columns")
         print(f"Sites: {final_df['site'].nunique()}")
-
     return final_df
 
 
-def aggregate_flows(temporal_resolution: str = "daily") -> pd.DataFrame:
-    """
-    Aggregate flows over different temporal resolutions
-    using globally configured CXN.
-    """
-    # Use main_data directly instead of creating a filtered view
-    view_name = "filtered_data"
-
+def aggregate_flows(
+    parquet_path: str,
+    temporal_resolution: str = "daily",
+    *,
+    sites: Optional[List[str]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> pd.DataFrame:
     if temporal_resolution == "daily":
         group_expr = "date"
     elif temporal_resolution == "weekly":
@@ -613,57 +600,28 @@ def aggregate_flows(temporal_resolution: str = "daily") -> pd.DataFrame:
         group_expr = (
             "strftime('%Y', date) || '-' || "
             "CASE "
-            "WHEN CAST(substr(strftime('%m', date), 1, 2) AS INTEGER) "
-            "IN (12, 1, 2) THEN 'Winter' "
-            "WHEN CAST(substr(strftime('%m', date), 1, 2) AS INTEGER) "
-            "BETWEEN 3 AND 5 THEN 'Spring' "
-            "WHEN CAST(substr(strftime('%m', date), 1, 2) AS INTEGER) "
-            "BETWEEN 6 AND 8 THEN 'Summer' "
-            "WHEN CAST(substr(strftime('%m', date), 1, 2) AS INTEGER) "
-            "BETWEEN 9 AND 11 THEN 'Fall' "
+            "WHEN CAST(substr(strftime('%m', date), 1, 2) AS INTEGER) IN (12, 1, 2) THEN 'Winter' "
+            "WHEN CAST(substr(strftime('%m', date), 1, 2) AS INTEGER) BETWEEN 3 AND 5 THEN 'Spring' "
+            "WHEN CAST(substr(strftime('%m', date), 1, 2) AS INTEGER) BETWEEN 6 AND 8 THEN 'Summer' "
+            "WHEN CAST(substr(strftime('%m', date), 1, 2) AS INTEGER) BETWEEN 9 AND 11 THEN 'Fall' "
             "END"
         )
     else:
         raise ValueError(
-            "Invalid temporal_resolution: choose from 'daily',"
-            "'weekly', 'monthly', 'seasonal'"
+            "Invalid temporal_resolution: choose 'daily'|'weekly'|'monthly'|'seasonal'"
         )
 
-    query = f"""
+    cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    q = f"""
+        {cte}
         SELECT
             site,
             {group_expr} AS period,
             AVG(value) AS mean_flow
-        FROM {view_name}
+        FROM filtered
         WHERE value IS NOT NULL
         GROUP BY site, period
         ORDER BY site, period
     """
-
-    df = CXN.execute(query).fetchdf()
+    df = CXN.execute(q).fetchdf()
     return df.rename(columns={"period": "time_period"})
-
-
-def get_connection_status() -> dict:
-    """Get current connection configuration and status"""
-    return CXN.get_config()
-
-
-def reset_connection():
-    """Reset the global connection configuration"""
-    CXN.reset_config()
-
-
-def configure_connection(
-    parquet_path: Optional[str] = None,
-    sites: Optional[List[str]] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-):
-    """Configure the global connection"""
-    CXN.configure(
-        parquet_path=parquet_path,
-        sites=sites,
-        start_date=start_date,
-        end_date=end_date,
-    )
