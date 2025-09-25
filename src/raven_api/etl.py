@@ -82,12 +82,17 @@ def init_etl(
         join_column: Optional name of the column referring to the sites for spatial joins.
     """
     with TemporaryDirectory() as tmp_dir:
-        if not os.path.exists(csv_src):
-            csv_dst = os.path.join(
-                tmp_dir, f"{next(_get_candidate_names())}.csv"
-                )
+        if _is_remote(csv_src):
+            # fetch remote to tmp
+            csv_dst = os.path.join(tmp_dir, f"{next(_get_candidate_names())}.csv")
             collect_remote(csv_src, csv_dst)
             csv_src = csv_dst
+        else:
+            # local path – must exist
+            if not os.path.exists(csv_src):
+                raise FileNotFoundError(
+                    f"Local CSV not found: {csv_src}. CWD={os.getcwd()}"
+                )
 
         df = load_raven_output(csv_src)
         long_df = reshape_to_long(df)
@@ -192,9 +197,7 @@ def load_raven_output(csv_path: str) -> pd.DataFrame:
     return df
 
 
-def reshape_to_long(
-    df: pd.DataFrame, exclude_precip: bool = True
-) -> pd.DataFrame:
+def reshape_to_long(df: pd.DataFrame, exclude_precip: bool = True) -> pd.DataFrame:
     """
     Convert wide-format dataframe to long format
     with optional exclusion of precip columns.
@@ -258,9 +261,7 @@ def load_parquet_data(parquet_path: str) -> pd.DataFrame:
     return df
 
 
-def assign_subperiods(
-    df: pd.DataFrame, break_point: int | None
-) -> pd.DataFrame:
+def assign_subperiods(df: pd.DataFrame, break_point: int | None) -> pd.DataFrame:
     """
     Add a 'subperiod' column to the DataFrame based on water year break.
 

@@ -91,9 +91,9 @@ Initialize the ETL process to convert a Raven output CSV to the internal Parquet
 
 ### `GET /api/indicators/sites`
 
-List all available site names in a Parquet file.
+List all available site names in a Parquet file. Can be filtered by prefix.
 
-- **Query Parameter**: `parquet_src` (required)
+- **Query Parameter**: `parquet_src` (required), `prefix` (optional)
 
 ## 🧮 Indicator Calculation Endpoints
 
