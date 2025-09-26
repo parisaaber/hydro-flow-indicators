@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 import numpy as np
 import pandas as pd
@@ -61,31 +61,72 @@ def mean_annual_flow(
     sites: Optional[List[str]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    # pagination
+    limit: Optional[int] = None,
+    cursor: Optional[
+        Dict[str, Any]
+    ] = None,  # {"site": "..."} or {"site":"...","water_year": 2001}
 ) -> pd.DataFrame:
     cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    limit_sql = f"LIMIT {limit + 1}" if limit is not None else ""
+
     if temporal_resolution == "annual":
-        q = f"""
-        {cte}
-        SELECT site, water_year, AVG(value) AS mean_annual_flow
-        FROM filtered
-        WHERE value IS NOT NULL
-        GROUP BY site, water_year
-        ORDER BY site, water_year
-        """
-    else:
+        ks = ""
+        if cursor and "site" in cursor and "water_year" in cursor:
+            esc = str(cursor["site"]).replace("'", "''")
+            year = int(cursor["water_year"])
+            ks = f"""
+            WHERE
+                (lower(site) > lower('{esc}'))
+             OR (lower(site) = lower('{esc}') AND site > '{esc}')
+             OR (site = '{esc}' AND water_year > {year})
+            """
+
         q = f"""
         {cte},
-        yearly_means AS (
-            SELECT site, water_year, AVG(value) AS maf_per_year
+        annual AS (
+            SELECT site, water_year, AVG(value) AS mean_annual_flow
             FROM filtered
             WHERE value IS NOT NULL
             GROUP BY site, water_year
         )
+        SELECT site, water_year, mean_annual_flow
+        FROM annual
+        {ks}
+        ORDER BY lower(site), site, water_year
+        {limit_sql}
+        """
+        return CXN.execute(q).fetchdf()
+
+    # overall
+    ks = ""
+    if cursor and "site" in cursor:
+        esc = str(cursor["site"]).replace("'", "''")
+        ks = f"""
+        WHERE
+            (lower(site) > lower('{esc}'))
+         OR (lower(site) = lower('{esc}') AND site > '{esc}')
+        """
+
+    q = f"""
+    {cte},
+    yearly_means AS (
+        SELECT site, water_year, AVG(value) AS maf_per_year
+        FROM filtered
+        WHERE value IS NOT NULL
+        GROUP BY site, water_year
+    ),
+    overall AS (
         SELECT site, AVG(maf_per_year) AS mean_annual_flow
         FROM yearly_means
         GROUP BY site
-        ORDER BY site
-        """
+    )
+    SELECT site, mean_annual_flow
+    FROM overall
+    {ks}
+    ORDER BY lower(site), site
+    {limit_sql}
+    """
     return CXN.execute(q).fetchdf()
 
 
@@ -96,31 +137,71 @@ def mean_aug_sep_flow(
     sites: Optional[List[str]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    # pagination
+    limit: Optional[int] = None,
+    cursor: Optional[
+        Dict[str, Any]
+    ] = None,  # {"site": "..."} or {"site":"...","water_year": 2001}
 ) -> pd.DataFrame:
     cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    limit_sql = f"LIMIT {limit + 1}" if limit is not None else ""
+
     if temporal_resolution == "annual":
-        q = f"""
-        {cte}
-        SELECT site, water_year, AVG(value) AS mean_aug_sep_flow
-        FROM filtered
-        WHERE EXTRACT(month FROM date) IN (8, 9)
-        GROUP BY site, water_year
-        ORDER BY site, water_year
-        """
-    else:
+        ks = ""
+        if cursor and "site" in cursor and "water_year" in cursor:
+            esc = str(cursor["site"]).replace("'", "''")
+            year = int(cursor["water_year"])
+            ks = f"""
+            WHERE
+                (lower(site) > lower('{esc}'))
+             OR (lower(site) = lower('{esc}') AND site > '{esc}')
+             OR (site = '{esc}' AND water_year > {year})
+            """
+
         q = f"""
         {cte},
-        aug_sep AS (
-            SELECT site, water_year, AVG(value) AS avg_aug_sep_flow
+        annual AS (
+            SELECT site, water_year, AVG(value) AS mean_aug_sep_flow
             FROM filtered
             WHERE EXTRACT(month FROM date) IN (8, 9)
             GROUP BY site, water_year
         )
+        SELECT site, water_year, mean_aug_sep_flow
+        FROM annual
+        {ks}
+        ORDER BY lower(site), site, water_year
+        {limit_sql}
+        """
+        return CXN.execute(q).fetchdf()
+
+    ks = ""
+    if cursor and "site" in cursor:
+        esc = str(cursor["site"]).replace("'", "''")
+        ks = f"""
+        WHERE
+            (lower(site) > lower('{esc}'))
+         OR (lower(site) = lower('{esc}') AND site > '{esc}')
+        """
+
+    q = f"""
+    {cte},
+    aug_sep AS (
+        SELECT site, water_year, AVG(value) AS avg_aug_sep_flow
+        FROM filtered
+        WHERE EXTRACT(month FROM date) IN (8, 9)
+        GROUP BY site, water_year
+    ),
+    overall AS (
         SELECT site, AVG(avg_aug_sep_flow) AS mean_aug_sep_flow
         FROM aug_sep
         GROUP BY site
-        ORDER BY site
-        """
+    )
+    SELECT site, mean_aug_sep_flow
+    FROM overall
+    {ks}
+    ORDER BY lower(site), site
+    {limit_sql}
+    """
     return CXN.execute(q).fetchdf()
 
 

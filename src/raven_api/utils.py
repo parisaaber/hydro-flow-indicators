@@ -1,8 +1,10 @@
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any, Optional
+import json
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
 import duckdb
+from fastapi import HTTPException
 from scipy.stats import (
     gumbel_r,
     norm,
@@ -372,3 +374,19 @@ def get_site_statistics_duckdb(
     ORDER BY site
     """
     return conn.execute(query).df()
+
+
+def envelope(items, has_more=False, next_cursor=None):
+    return {"items": items, "has_more": has_more, "next_cursor": next_cursor}
+
+
+def parse_cursor(cursor: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not cursor:
+        return None
+    try:
+        return json.loads(cursor)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail='`cursor` must be a JSON string, e.g. {"site":"ABC"}',
+        )

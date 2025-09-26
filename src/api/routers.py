@@ -15,6 +15,7 @@ from raven_api.indicators import (
     CXN,
 )
 from raven_api.mapping import map_features
+from raven_api.utils import envelope, parse_cursor
 
 etl_router = APIRouter(tags=["ETL"])
 indicators_router = APIRouter(tags=["Indicators"])
@@ -120,15 +121,44 @@ async def get_maf(
     sites: Optional[List[str]] = Query(default=None),
     start_date: Optional[str] = Query(default=None),
     end_date: Optional[str] = Query(default=None),
+    # pagination
+    limit: Optional[int] = Query(None, ge=1, le=10000),
+    cursor: Optional[str] = Query(
+        None,
+        description='JSON string. overall={"site":"S"}; annual={"site":"S","water_year":2001}',
+    ),
 ):
+    cur_obj = parse_cursor(cursor)
+
     df = mean_annual_flow(
         parquet_path,
         temporal_resolution,
         sites=sites,
         start_date=start_date,
         end_date=end_date,
+        limit=limit,
+        cursor=cur_obj,
     )
-    return df.to_dict(orient="records")
+
+    if limit is None:
+        return envelope(df.to_dict(orient="records"))
+
+    has_more = len(df) > limit
+    page = df.iloc[:limit]
+
+    if temporal_resolution == "annual":
+        next_cur = (
+            {
+                "site": str(page.iloc[-1]["site"]),
+                "water_year": int(page.iloc[-1]["water_year"]),
+            }
+            if has_more
+            else None
+        )
+    else:
+        next_cur = {"site": str(page.iloc[-1]["site"])} if has_more else None
+
+    return envelope(page.to_dict(orient="records"), has_more, next_cur)
 
 
 @indicators_router.get("/mean_aug_sep_flow")
@@ -140,15 +170,42 @@ async def get_mean_aug_sep_flow(
     sites: Optional[List[str]] = Query(default=None),
     start_date: Optional[str] = Query(default=None),
     end_date: Optional[str] = Query(default=None),
+    # pagination
+    limit: Optional[int] = Query(None, ge=1, le=10000),
+    cursor: Optional[str] = Query(
+        None,
+        description='JSON string. overall={"site":"S"}; annual={"site":"S","water_year":2001}',
+    ),
 ):
+    cur_obj = parse_cursor(cursor)
     df = mean_aug_sep_flow(
         parquet_path,
         temporal_resolution,
         sites=sites,
         start_date=start_date,
         end_date=end_date,
+        limit=limit,
+        cursor=cur_obj,
     )
-    return df.to_dict(orient="records")
+    if limit is None:
+        return envelope(df.to_dict(orient="records"))
+
+    has_more = len(df) > limit
+    page = df.iloc[:limit]
+
+    if temporal_resolution == "annual":
+        next_cur = (
+            {
+                "site": str(page.iloc[-1]["site"]),
+                "water_year": int(page.iloc[-1]["water_year"]),
+            }
+            if has_more
+            else None
+        )
+    else:
+        next_cur = {"site": str(page.iloc[-1]["site"])} if has_more else None
+
+    return envelope(page.to_dict(orient="records"), has_more, next_cur)
 
 
 @indicators_router.get("/peak_flow_timing")
@@ -302,26 +359,47 @@ async def list_sites(
     prefix: Optional[str] = Query(
         None, description="Optional prefix to filter site IDs."
     ),
+    limit: int = Query(
+        1000,
+        ge=1,
+        le=10000,
+        description="Max number of sites to return (default 1000).",
+    ),
+    cursor: Optional[str] = Query(
+        None,
+        description='Return sites strictly after this ID, under the form of a JSON string like {"site": "<site_id>"}.',
+    ),
 ):
-    """
-    List all available site names from the Parquet file,
-    optionally filtering by a prefix.
-    """
-    main_view = CXN.get_or_create_main_view(parquet_path)
+    cur = parse_cursor(cursor)
+    main = CXN.get_or_create_main_view(parquet_path)
 
+    wh = []
     if prefix:
         esc = prefix.replace("'", "''")
-        q = f"""
-            SELECT DISTINCT site
-            FROM {main_view}
-            WHERE site ILIKE '{esc}%'
-            ORDER BY site
-        """
-    else:
-        q = f"SELECT DISTINCT site FROM {main_view} ORDER BY site"
+        wh.append(f"site ILIKE '{esc}%'")
+    if cur and "site" in cur:
+        esc = str(cur["site"]).replace("'", "''")
+        wh.append(
+            f"(lower(site) > lower('{esc}') OR (lower(site) = lower('{esc}') AND site > '{esc}'))"
+        )
 
-    df = CXN.execute(q).fetchdf()
-    return df["site"].tolist()
+    where = f"WHERE {' AND '.join(wh)}" if wh else ""
+    q = f"""
+      WITH distinct_sites AS (
+        SELECT DISTINCT site
+        FROM {main}
+        {where}
+      )
+      SELECT site
+      FROM distinct_sites
+      ORDER BY lower(site), site
+      LIMIT {limit + 1}
+    """
+    rows = CXN.execute(q).fetchall()
+    items = [r[0] for r in rows[:limit]]
+    has_more = len(rows) > limit
+    next_cur = {"site": items[-1]} if has_more else None
+    return envelope(items, has_more, next_cur)
 
 
 # -----------------------
