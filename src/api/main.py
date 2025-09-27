@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from api.routers import (
     etl_router,
     indicators_router,
@@ -15,18 +16,7 @@ app = FastAPI(
     version=VERSION,
 )
 
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.include_router(connection_router, prefix="/api/connection", tags=["Connection"])
 app.include_router(etl_router, prefix="/api/etl", tags=["ETL"])

@@ -591,6 +591,9 @@ async def get_aggregate_flows_route(
     return envelope(page.to_dict(orient="records"), has_more, next_cur)
 
 
+# -----------------------
+# Sites
+# -----------------------
 @indicators_router.get("/sites")
 async def list_sites(
     parquet_path: str = Query(

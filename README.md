@@ -93,7 +93,7 @@ Initialize the ETL process to convert a Raven output CSV to the internal Parquet
 
 List all available site names in a Parquet file. Can be filtered by prefix.
 
-- **Query Parameter**: `parquet_src` (required), `prefix` (optional)
+- **Query Parameter**: `parquet_src` (required), `prefix` (optional), `limit` (optional), `cursor` (optional)
 
 ## 🧮 Indicator Calculation Endpoints
 
@@ -103,6 +103,8 @@ All indicator endpoints accept these common query parameters for filtering:
 - `sites` **(List[str], optional)**: Filter results for specific sites (e.g., `sites=site1&sites=site2`).
 - `start_date` **(str, optional)**: Start date for filtering (`YYYY-MM-DD`).
 - `end_date` **(str, optional)**: End date for filtering (`YYYY-MM-DD`).
+- `limit` **(int, optional)**: Limit number of results
+- `cursor` **(str, optional)**: JSON string indicating starting point to retrieve the next page. Content is specific to endpoint.
 
 | Endpoint                                           | Description                                                            | Specific Parameters                                                                                                   |
 | :------------------------------------------------- | :--------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------- |
