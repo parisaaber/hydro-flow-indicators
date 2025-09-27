@@ -42,10 +42,6 @@ def _filtered_cte(
     start_date: Optional[str],
     end_date: Optional[str],
 ) -> str:
-    """
-    Build a common table expression header that selects from the cached main view for this parquet,
-    applying request-scoped filters. No global mutable state involved.
-    """
     main = CXN.get_or_create_main_view(parquet_path)
     where_clause = _where_clause(sites, start_date, end_date)
     return f"WITH filtered AS (SELECT * FROM {main} WHERE {where_clause})"
@@ -98,7 +94,6 @@ def mean_annual_flow(
         """
         return CXN.execute(q).fetchdf()
 
-    # overall
     ks = ""
     if cursor and "site" in cursor:
         esc = str(cursor["site"]).replace("'", "''")
@@ -212,23 +207,27 @@ def peak_flow_timing(
     sites: Optional[List[str]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    # pagination
+    limit: Optional[int] = None,
+    cursor: Optional[
+        Dict[str, Any]
+    ] = None,  # {"site": "..."} or {"site":"...","water_year": 2001}
 ) -> pd.DataFrame:
     cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    limit_sql = f"LIMIT {limit + 1}" if limit is not None else ""
+
     if temporal_resolution == "annual":
-        q = f"""
-        {cte},
-        ranked_flows AS (
-            SELECT site, water_year, value,
-                   EXTRACT(doy FROM date) AS doy,
-                   ROW_NUMBER() OVER (PARTITION BY site, water_year ORDER BY value DESC) AS rn
-            FROM filtered
-        )
-        SELECT site, water_year, doy AS peak_flow_timing
-        FROM ranked_flows
-        WHERE rn = 1
-        ORDER BY site, water_year
-        """
-    else:
+        ks = ""
+        if cursor and "site" in cursor and "water_year" in cursor:
+            esc = str(cursor["site"]).replace("'", "''")
+            year = int(cursor["water_year"])
+            ks = f"""
+            WHERE
+                (lower(site) > lower('{esc}'))
+             OR (lower(site) = lower('{esc}') AND site > '{esc}')
+             OR (site = '{esc}' AND water_year > {year})
+            """
+
         q = f"""
         {cte},
         ranked_flows AS (
@@ -242,11 +241,47 @@ def peak_flow_timing(
             FROM ranked_flows
             WHERE rn = 1
         )
+        SELECT site, water_year, doy AS peak_flow_timing
+        FROM annual_peaks
+        {ks}
+        ORDER BY lower(site), site, water_year
+        {limit_sql}
+        """
+        return CXN.execute(q).fetchdf()
+
+    ks = ""
+    if cursor and "site" in cursor:
+        esc = str(cursor["site"]).replace("'", "''")
+        ks = f"""
+        WHERE
+            (lower(site) > lower('{esc}'))
+         OR (lower(site) = lower('{esc}') AND site > '{esc}')
+        """
+
+    q = f"""
+    {cte},
+    ranked_flows AS (
+        SELECT site, water_year, value,
+               EXTRACT(doy FROM date) AS doy,
+               ROW_NUMBER() OVER (PARTITION BY site, water_year ORDER BY value DESC) AS rn
+        FROM filtered
+    ),
+    annual_peaks AS (
+        SELECT site, water_year, doy
+        FROM ranked_flows
+        WHERE rn = 1
+    ),
+    overall AS (
         SELECT site, AVG(doy) AS peak_flow_timing
         FROM annual_peaks
         GROUP BY site
-        ORDER BY site
-        """
+    )
+    SELECT site, peak_flow_timing
+    FROM overall
+    {ks}
+    ORDER BY lower(site), site
+    {limit_sql}
+    """
     return CXN.execute(q).fetchdf()
 
 
@@ -258,8 +293,15 @@ def days_below_efn(
     sites: Optional[List[str]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    # pagination
+    limit: Optional[int] = None,
+    cursor: Optional[
+        Dict[str, Any]
+    ] = None,  # {"site": "..."} or {"site":"...","water_year": 2001}
 ) -> pd.DataFrame:
     cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    limit_sql = f"LIMIT {limit + 1}" if limit is not None else ""
+
     base = f"""
     {cte},
     mean_annual AS (
@@ -277,35 +319,59 @@ def days_below_efn(
                m.maf_site, m.maf_site * {EFN_threshold} AS threshold
         FROM filtered p
         JOIN mean_annual_site m ON p.site = m.site
+    ),
+    days_below AS (
+        SELECT site, water_year,
+               COUNT(*) FILTER (WHERE value < threshold) AS days_below_efn
+        FROM daily_with_threshold
+        GROUP BY site, water_year
     )
     """
+
     if temporal_resolution == "annual":
+        ks = ""
+        if cursor and "site" in cursor and "water_year" in cursor:
+            esc = str(cursor["site"]).replace("'", "''")
+            year = int(cursor["water_year"])
+            ks = f"""
+            WHERE
+                (lower(site) > lower('{esc}'))
+             OR (lower(site) = lower('{esc}') AND site > '{esc}')
+             OR (site = '{esc}' AND water_year > {year})
+            """
+
         q = f"""
-        {base},
-        days_below AS (
-            SELECT site, water_year,
-                   COUNT(*) FILTER (WHERE value < threshold) AS days_below_efn
-            FROM daily_with_threshold
-            GROUP BY site, water_year
-        )
+        {base}
         SELECT site, water_year, days_below_efn
         FROM days_below
-        ORDER BY site, water_year
+        {ks}
+        ORDER BY lower(site), site, water_year
+        {limit_sql}
         """
-    else:
-        q = f"""
-        {base},
-        days_below AS (
-            SELECT site, water_year,
-                   COUNT(*) FILTER (WHERE value < threshold) AS days_below_efn
-            FROM daily_with_threshold
-            GROUP BY site, water_year
-        )
+        return CXN.execute(q).fetchdf()
+
+    ks = ""
+    if cursor and "site" in cursor:
+        esc = str(cursor["site"]).replace("'", "''")
+        ks = f"""
+        WHERE
+            (lower(site) > lower('{esc}'))
+         OR (lower(site) = lower('{esc}') AND site > '{esc}')
+        """
+
+    q = f"""
+    {base},
+    overall AS (
         SELECT site, AVG(days_below_efn) AS days_below_efn
         FROM days_below
         GROUP BY site
-        ORDER BY site
-        """
+    )
+    SELECT site, days_below_efn
+    FROM overall
+    {ks}
+    ORDER BY lower(site), site
+    {limit_sql}
+    """
     return CXN.execute(q).fetchdf()
 
 
@@ -316,31 +382,71 @@ def annual_peaks(
     sites: Optional[List[str]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    # pagination
+    limit: Optional[int] = None,
+    cursor: Optional[
+        Dict[str, Any]
+    ] = None,  # {"site": "..."} or {"site":"...","water_year": 2001}
 ) -> pd.DataFrame:
     cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    limit_sql = f"LIMIT {limit + 1}" if limit is not None else ""
+
     if temporal_resolution == "annual":
+        ks = ""
+        if cursor and "site" in cursor and "water_year" in cursor:
+            esc = str(cursor["site"]).replace("'", "''")
+            year = int(cursor["water_year"])
+            ks = f"""
+            WHERE
+                (lower(site) > lower('{esc}'))
+             OR (lower(site) = lower('{esc}') AND site > '{esc}')
+             OR (site = '{esc}' AND water_year > {year})
+            """
+
         q = f"""
         {cte}
-        SELECT site, water_year, MAX(value) AS annual_peak
-        FROM filtered
-        WHERE value IS NOT NULL
-        GROUP BY site, water_year
-        ORDER BY site, water_year
-        """
-    else:
-        q = f"""
-        {cte},
-        annual_peaks AS (
+        , annual AS (
             SELECT site, water_year, MAX(value) AS annual_peak
             FROM filtered
             WHERE value IS NOT NULL
             GROUP BY site, water_year
         )
+        SELECT site, water_year, annual_peak
+        FROM annual
+        {ks}
+        ORDER BY lower(site), site, water_year
+        {limit_sql}
+        """
+        return CXN.execute(q).fetchdf()
+
+    ks = ""
+    if cursor and "site" in cursor:
+        esc = str(cursor["site"]).replace("'", "''")
+        ks = f"""
+        WHERE
+            (lower(site) > lower('{esc}'))
+         OR (lower(site) = lower('{esc}') AND site > '{esc}')
+        """
+
+    q = f"""
+    {cte}
+    , annual_peaks AS (
+        SELECT site, water_year, MAX(value) AS annual_peak
+        FROM filtered
+        WHERE value IS NOT NULL
+        GROUP BY site, water_year
+    )
+    , overall AS (
         SELECT site, AVG(annual_peak) AS annual_peak
         FROM annual_peaks
         GROUP BY site
-        ORDER BY site
-        """
+    )
+    SELECT site, annual_peak
+    FROM overall
+    {ks}
+    ORDER BY lower(site), site
+    {limit_sql}
+    """
     return CXN.execute(q).fetchdf()
 
 
@@ -361,12 +467,13 @@ def fit_ffa(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     debug: bool = False,
+    # pagination
+    limit: Optional[int] = None,
+    cursor: Optional[Dict[str, Any]] = None,  # {"flow_rank": int, "site": str}
 ) -> pd.DataFrame:
-    """
-    FFA using request-scoped CTE and a unique TEMP view (no collisions).
-    """
     cte = _filtered_cte(parquet_path, sites, start_date, end_date)
     temp_view = f"temp_annual_peaks_{uuid.uuid4().hex[:8]}"
+    limit_sql = f"LIMIT {limit + 1}" if limit is not None else ""
 
     CXN.con.execute(
         f"""
@@ -462,14 +569,34 @@ def fit_ffa(
 
         results_df = pd.DataFrame(results)
         CXN.con.register("results_data", results_df)
-        final_results = CXN.execute(
+
+        ks = ""
+        if cursor and "flow_rank" in cursor and "site" in cursor:
+            fr = int(cursor["flow_rank"])
+            esc_site = str(cursor["site"]).replace("'", "''")
+            ks = f"""
+            WHERE
+                (flow_rank > {fr})
+             OR (flow_rank = {fr} AND (lower(site) > lower('{esc_site}')
+                 OR (lower(site) = lower('{esc_site}') AND site > '{esc_site}')))
             """
-            SELECT *,
-                   RANK() OVER (ORDER BY mean_flow DESC) AS flow_rank
-            FROM results_data
-            ORDER BY flow_rank
+
+        final_results = CXN.execute(
+            f"""
+            WITH ranked AS (
+                SELECT
+                    *,
+                    RANK() OVER (ORDER BY mean_flow DESC) AS flow_rank
+                FROM results_data
+            )
+            SELECT *
+            FROM ranked
+            {ks}
+            ORDER BY flow_rank, lower(site), site
+            {limit_sql}
             """
         ).fetchdf()
+
         return final_results
 
     finally:
@@ -485,8 +612,22 @@ def peak_flows(
     sites: Optional[List[str]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    # pagination
+    limit: Optional[int] = None,
+    cursor: Optional[Dict[str, Any]] = None,  # {"site":"..."}
 ) -> pd.DataFrame:
     cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    limit_sql = f"LIMIT {limit + 1}" if limit is not None else ""
+
+    ks = ""
+    if cursor and "site" in cursor:
+        esc = str(cursor["site"]).replace("'", "''")
+        ks = f"""
+        WHERE
+            (lower(site) > lower('{esc}'))
+         OR (lower(site) = lower('{esc}') AND site > '{esc}')
+        """
+
     q = f"""
     {cte},
     annual_peaks AS (
@@ -494,11 +635,17 @@ def peak_flows(
         FROM filtered
         WHERE value IS NOT NULL
         GROUP BY site, water_year
+    ),
+    overall AS (
+        SELECT site, AVG(annual_peak) AS mean_annual_peak
+        FROM annual_peaks
+        GROUP BY site
     )
-    SELECT site, AVG(annual_peak) AS mean_annual_peak
-    FROM annual_peaks
-    GROUP BY site
-    ORDER BY site
+    SELECT site, mean_annual_peak
+    FROM overall
+    {ks}
+    ORDER BY lower(site), site
+    {limit_sql}
     """
     return CXN.execute(q).fetchdf()
 
@@ -509,26 +656,48 @@ def weekly_flow_exceedance(
     sites: Optional[List[str]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    # pagination
+    limit: Optional[int] = None,
+    cursor: Optional[Dict[str, Any]] = None,  # {"site":"...","week": 0-53}
 ) -> pd.DataFrame:
     cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    limit_sql = f"LIMIT {limit + 1}" if limit is not None else ""
+
+    ks = ""
+    if cursor and "site" in cursor and "week" in cursor:
+        esc = str(cursor["site"]).replace("'", "''")
+        wk = int(cursor["week"])
+        ks = f"""
+        WHERE
+            (lower(site) > lower('{esc}'))
+         OR (lower(site) = lower('{esc}') AND site > '{esc}')
+         OR (site = '{esc}' AND week > {wk})
+        """
+
     q = f"""
-    {cte}
-    SELECT
-        site,
-        CAST(strftime('%W', date) AS INTEGER) AS week,
-        quantile_cont(value, 0.90) AS p10,
-        quantile_cont(value, 0.80) AS p20,
-        quantile_cont(value, 0.70) AS p30,
-        quantile_cont(value, 0.60) AS p40,
-        quantile_cont(value, 0.50) AS p50,
-        quantile_cont(value, 0.40) AS p60,
-        quantile_cont(value, 0.30) AS p70,
-        quantile_cont(value, 0.20) AS p80,
-        quantile_cont(value, 0.05) AS p95
-    FROM filtered
-    WHERE value IS NOT NULL
-    GROUP BY site, CAST(strftime('%W', date) AS INTEGER)
-    ORDER BY site, week
+    {cte},
+    weekly AS (
+        SELECT
+            site,
+            CAST(strftime('%W', date) AS INTEGER) AS week,
+            quantile_cont(value, 0.90) AS p10,
+            quantile_cont(value, 0.80) AS p20,
+            quantile_cont(value, 0.70) AS p30,
+            quantile_cont(value, 0.60) AS p40,
+            quantile_cont(value, 0.50) AS p50,
+            quantile_cont(value, 0.40) AS p60,
+            quantile_cont(value, 0.30) AS p70,
+            quantile_cont(value, 0.20) AS p80,
+            quantile_cont(value, 0.05) AS p95
+        FROM filtered
+        WHERE value IS NOT NULL
+        GROUP BY site, CAST(strftime('%W', date) AS INTEGER)
+    )
+    SELECT site, week, p10, p20, p30, p40, p50, p60, p70, p80, p95
+    FROM weekly
+    {ks}
+    ORDER BY lower(site), site, week
+    {limit_sql}
     """
     return CXN.execute(q).fetchdf()
 
@@ -670,6 +839,9 @@ def aggregate_flows(
     sites: Optional[List[str]] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    # pagination
+    limit: Optional[int] = None,
+    cursor: Optional[Dict[str, Any]] = None,  # {"site":"...","time_period":"..."}
 ) -> pd.DataFrame:
     if temporal_resolution == "daily":
         group_expr = "date"
@@ -693,16 +865,43 @@ def aggregate_flows(
         )
 
     cte = _filtered_cte(parquet_path, sites, start_date, end_date)
+    limit_sql = f"LIMIT {limit + 1}" if limit is not None else ""
+
+    ks = ""
+    if cursor and "site" in cursor and "time_period" in cursor:
+        esc_site = str(cursor["site"]).replace("'", "''")
+        esc_period = str(cursor["time_period"]).replace("'", "''")
+        ks = f"""
+        WHERE
+            (lower(site) > lower('{esc_site}'))
+         OR (lower(site) = lower('{esc_site}') AND site > '{esc_site}')
+         OR (site = '{esc_site}' AND period_key > '{esc_period}')
+        """
+
     q = f"""
-        {cte}
-        SELECT
-            site,
-            {group_expr} AS period,
-            AVG(value) AS mean_flow
-        FROM filtered
-        WHERE value IS NOT NULL
-        GROUP BY site, period
-        ORDER BY site, period
+        {cte},
+        agg AS (
+            SELECT
+                site,
+                {group_expr} AS period,
+                AVG(value) AS mean_flow
+            FROM filtered
+            WHERE value IS NOT NULL
+            GROUP BY site, period
+        ),
+        ordered AS (
+            SELECT
+                site,
+                period,
+                CAST(period AS TEXT) AS period_key,
+                mean_flow
+            FROM agg
+        )
+        SELECT site, period, mean_flow
+        FROM ordered
+        {ks}
+        ORDER BY lower(site), site, period_key
+        {limit_sql}
     """
     df = CXN.execute(q).fetchdf()
     return df.rename(columns={"period": "time_period"})
