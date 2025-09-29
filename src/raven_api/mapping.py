@@ -1,6 +1,5 @@
 from __future__ import annotations
 import os
-import requests
 import boto3
 from urllib.parse import urlsplit
 from fastapi.responses import StreamingResponse, Response, RedirectResponse
@@ -29,13 +28,6 @@ def _stream_local(path: str):
             yield chunk
     finally:
         f.close()
-
-def _stream_http(url: str):
-    with requests.get(url, stream=True, timeout=30) as r:
-        r.raise_for_status()
-        for chunk in r.iter_content(chunk_size=CHUNK):
-            if chunk:
-                yield chunk
 
 def _s3_presign(url: str, *, expires=3600):
     scheme, bucket, key, _ = _split_url_like(url)
