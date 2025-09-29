@@ -15,7 +15,6 @@ from scipy.stats import (
     pearson3,
 )
 
-
 def detect_outliers_duckdb(
     table_name: str,
     column: str,

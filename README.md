@@ -143,7 +143,7 @@ hydro-flow-indicators/
 The API expects Parquet files with the following schema:
 
 - `date` **(date)**: The date of the observation.
-- `site` **(str)**: A unique identifier for the gauge/site (e.g., `"sub11004314 [m3/s]"`).
+- `site` **(str)**: A unique identifier for the gauge/site (e.g., `"sub11004314"`).
 - `value` **(float)**: The streamflow value, ideally in m³/s.
 
 **Note**: The ETL endpoint (`/etl/init`) is provided to convert from Raven's CSV output to this required Parquet format.
@@ -161,8 +161,8 @@ curl "http://127.0.0.1:8000/api/indicators/sites?parquet_src=/path/to/data.parqu
 ```bash
 curl "http://127.0.0.1:8000/api/indicators/?\
 parquet_src=/path/to/data.parquet\
-&sites=sub11004314 [m3/s]\
-&sites=sub11004315 [m3/s]\
+&sites=sub11004314\
+&sites=sub11004315\
 &efn_threshold=0.2\
 &break_point=2010"
 ```
@@ -172,7 +172,7 @@ parquet_src=/path/to/data.parquet\
 ```bash
 curl "http://127.0.0.1:8000/api/indicators/flood_frequency_analysis?\
 parquet_src=/path/to/data.parquet\
-&sites=sub11004314 [m3/s]\
+&sites=sub11004314\
 &return_periods=2,20,100\
 &dist=logpearson3\
 &remove_outliers=true\
@@ -184,7 +184,7 @@ parquet_src=/path/to/data.parquet\
 ```bash
 curl "http://127.0.0.1:8000/api/indicators/aggregate_flows?\
 parquet_src=/path/to/data.parquet\
-&sites=sub11004314 [m3/s]\
+&sites=sub11004314\
 &temporal_resolution=daily\
 &start_date=2010-01-01\
 &end_date=2010-12-31"

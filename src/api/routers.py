@@ -36,7 +36,7 @@ async def initialize_etl(
     join_column: Optional[str] = None,
 ):
     init_etl(csv_path, output_path, spatial_path, join_column)
-    return {"message": "ETL initialized"}
+    return {"message": "ETL Done"}
 
 
 # -----------------------
