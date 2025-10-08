@@ -1,5 +1,6 @@
 from typing import List, Dict, Tuple, Any, Optional
 import json
+
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
@@ -14,6 +15,7 @@ from scipy.stats import (
     weibull_min,
     pearson3,
 )
+
 
 def detect_outliers_duckdb(
     table_name: str,
@@ -138,7 +140,7 @@ def calculate_goodness_of_fit(
             log_likelihood = np.sum(dist_obj.logpdf(data, *params))
 
         if not np.isfinite(log_likelihood):
-            return {"error": "Invalid log likelihood"}
+            raise ValueError("Log likelihood is not finite")
 
         # --- AIC/BIC ---
         k = len(params)
@@ -170,7 +172,7 @@ def calculate_goodness_of_fit(
             "log_likelihood": log_likelihood,
         }
     except Exception as e:
-        return {"error": f"GOF calculation failed: {str(e)}"}
+        raise ValueError(f"GOF calculation failed: {str(e)}")
 
 
 def fit_distribution(

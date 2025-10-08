@@ -767,6 +767,7 @@ def calculate_all_indicators(
             remove_outliers=remove_outliers,
             outlier_method=outlier_method,
             outlier_threshold=outlier_threshold,
+            available_distributions=available_distributions,
             selection_criteria=selection_criteria,
             min_years=min_years,
             sites=sites,

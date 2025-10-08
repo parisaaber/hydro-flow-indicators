@@ -3,12 +3,14 @@ import re
 from tempfile import TemporaryDirectory, _get_candidate_names
 from urllib.parse import urlsplit, urlunsplit
 import requests
+import io
+import gzip
+
 import boto3
 import pandas as pd
 import duckdb
 import numpy as np
 import geopandas as gpd
-import io, gzip
 from pyproj import CRS
 
 _S3_HTTPS_URL_REGEX = re.compile(
@@ -16,6 +18,7 @@ _S3_HTTPS_URL_REGEX = re.compile(
 )
 
 _M3S_SUFFIX_RE = re.compile(r"\s*\[m3/s\]\s*$", re.IGNORECASE)
+
 
 def _split_url(url: str):
     p = urlsplit(url)
@@ -227,6 +230,7 @@ def reshape_to_long(df: pd.DataFrame, exclude_precip: bool = True) -> pd.DataFra
     long_df["value"] = pd.to_numeric(long_df["value"], errors="coerce")
     return long_df.dropna(subset=["value"])
 
+
 def remove_unit_suffix_from_site(df: pd.DataFrame) -> pd.DataFrame:
     """
     Normalize the 'site' column by removing the exact trailing '[m3/s]' unit tag.
@@ -235,7 +239,9 @@ def remove_unit_suffix_from_site(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("Expected 'site' column")
 
     df = df.copy()
-    df["site"] = df["site"].astype(str).str.replace(_M3S_SUFFIX_RE, "", regex=True).str.rstrip()
+    df["site"] = (
+        df["site"].astype(str).str.replace(_M3S_SUFFIX_RE, "", regex=True).str.rstrip()
+    )
     return df
 
 
