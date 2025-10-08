@@ -3,17 +3,21 @@ import re
 from tempfile import TemporaryDirectory, _get_candidate_names
 from urllib.parse import urlsplit, urlunsplit
 import requests
+import io
+import gzip
+
 import boto3
 import pandas as pd
 import duckdb
 import numpy as np
 import geopandas as gpd
-import io, gzip
 from pyproj import CRS
 
 _S3_HTTPS_URL_REGEX = re.compile(
     r"^(?P<bucket>[^.]+)\.(?:s3(?:[.-][a-z0-9-]+)?|s3-accelerate)\.amazonaws\.com$"
 )
+
+_M3S_SUFFIX_RE = re.compile(r"\s*\[m3/s\]\s*$", re.IGNORECASE)
 
 
 def _split_url(url: str):
@@ -82,15 +86,21 @@ def init_etl(
         join_column: Optional name of the column referring to the sites for spatial joins.
     """
     with TemporaryDirectory() as tmp_dir:
-        if not os.path.exists(csv_src):
-            csv_dst = os.path.join(
-                tmp_dir, f"{next(_get_candidate_names())}.csv"
-                )
+        if _is_remote(csv_src):
+            # fetch remote to tmp
+            csv_dst = os.path.join(tmp_dir, f"{next(_get_candidate_names())}.csv")
             collect_remote(csv_src, csv_dst)
             csv_src = csv_dst
+        else:
+            # local path – must exist
+            if not os.path.exists(csv_src):
+                raise FileNotFoundError(
+                    f"Local CSV not found: {csv_src}. CWD={os.getcwd()}"
+                )
 
         df = load_raven_output(csv_src)
         long_df = reshape_to_long(df)
+        long_df = remove_unit_suffix_from_site(long_df)
 
         output_is_remote = _is_remote(output_path)
         parquet_dst = (
@@ -192,9 +202,7 @@ def load_raven_output(csv_path: str) -> pd.DataFrame:
     return df
 
 
-def reshape_to_long(
-    df: pd.DataFrame, exclude_precip: bool = True
-) -> pd.DataFrame:
+def reshape_to_long(df: pd.DataFrame, exclude_precip: bool = True) -> pd.DataFrame:
     """
     Convert wide-format dataframe to long format
     with optional exclusion of precip columns.
@@ -221,6 +229,20 @@ def reshape_to_long(
 
     long_df["value"] = pd.to_numeric(long_df["value"], errors="coerce")
     return long_df.dropna(subset=["value"])
+
+
+def remove_unit_suffix_from_site(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize the 'site' column by removing the exact trailing '[m3/s]' unit tag.
+    """
+    if "site" not in df.columns:
+        raise ValueError("Expected 'site' column")
+
+    df = df.copy()
+    df["site"] = (
+        df["site"].astype(str).str.replace(_M3S_SUFFIX_RE, "", regex=True).str.rstrip()
+    )
+    return df
 
 
 def save_to_parquet(df: pd.DataFrame, out_path: str) -> None:
@@ -258,9 +280,7 @@ def load_parquet_data(parquet_path: str) -> pd.DataFrame:
     return df
 
 
-def assign_subperiods(
-    df: pd.DataFrame, break_point: int | None
-) -> pd.DataFrame:
+def assign_subperiods(df: pd.DataFrame, break_point: int | None) -> pd.DataFrame:
     """
     Add a 'subperiod' column to the DataFrame based on water year break.
 
@@ -310,6 +330,8 @@ def export_spatial_to_geojson_gz(
                 f"specified join_column='{join_column}'. Please resolve the conflict."
             )
         gdf = gdf.rename(columns={join_column: "site"})
+
+    gdf = remove_unit_suffix_from_site(gdf)
 
     if expected_sites is not None:
         spatial_sites = set(gdf["site"].dropna().astype(str))

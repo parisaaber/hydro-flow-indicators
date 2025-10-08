@@ -1,16 +1,27 @@
-from typing import List, Dict, Tuple
-import pandas as pd
+from typing import List, Dict, Tuple, Any, Optional
+import json
+
 import numpy as np
+import pandas as pd
 import scipy.stats as stats
 import duckdb
+from fastapi import HTTPException
 from scipy.stats import (
-    gumbel_r, norm, lognorm, genextreme, gamma, weibull_min, pearson3
+    gumbel_r,
+    norm,
+    lognorm,
+    genextreme,
+    gamma,
+    weibull_min,
+    pearson3,
 )
 
 
 def detect_outliers_duckdb(
-    conn: duckdb.DuckDBPyConnection, table_name: str,
-    column: str, method: str = "iqr", threshold: float = 1.5
+    table_name: str,
+    column: str,
+    method: str = "iqr",
+    threshold: float = 1.5,
 ) -> str:
     """
     Generate SQL query for outlier detection using DuckDB.
@@ -81,16 +92,12 @@ def detect_outliers_duckdb(
         FROM {table_name}, median_stats, mad_stats
         """
     else:
-        raise ValueError(
-            "Method must be 'iqr', 'zscore', or 'modified_zscore'"
-        )
+        raise ValueError("Method must be 'iqr', 'zscore', or 'modified_zscore'")
     return query
 
 
 def calculate_goodness_of_fit(
-    data: np.ndarray,
-    distribution: str,
-    params: tuple
+    data: np.ndarray, distribution: str, params: tuple
 ) -> Dict[str, float]:
     """
     Calculate goodness-of-fit statistics for a distribution.
@@ -129,13 +136,11 @@ def calculate_goodness_of_fit(
             )
             log_likelihood = np.sum(pearson3.logpdf(log_data, *params))
         else:
-            ks_stat, ks_pvalue = stats.kstest(
-                data, lambda x: dist_obj.cdf(x, *params)
-            )
+            ks_stat, ks_pvalue = stats.kstest(data, lambda x: dist_obj.cdf(x, *params))
             log_likelihood = np.sum(dist_obj.logpdf(data, *params))
 
         if not np.isfinite(log_likelihood):
-            return {"error": "Invalid log likelihood"}
+            raise ValueError("Log likelihood is not finite")
 
         # --- AIC/BIC ---
         k = len(params)
@@ -167,12 +172,11 @@ def calculate_goodness_of_fit(
             "log_likelihood": log_likelihood,
         }
     except Exception as e:
-        return {"error": f"GOF calculation failed: {str(e)}"}
+        raise ValueError(f"GOF calculation failed: {str(e)}")
 
 
 def fit_distribution(
-    data: np.ndarray,
-    distribution: str
+    data: np.ndarray, distribution: str
 ) -> Tuple[tuple, Dict[str, float]]:
     """
     Fit a distribution to data and return parameters
@@ -235,8 +239,7 @@ def fit_distribution(
         elif distribution == "logpearson3":
             # Log-Pearson III: fit Pearson III to log-transformed data
             if np.any(data <= 0):
-                return None, {
-                    "error": "Log-Pearson III requires positive data"}
+                return None, {"error": "Log-Pearson III requires positive data"}
             log_data = np.log(data)
             params = pearson3.fit(log_data)
         else:
@@ -254,9 +257,7 @@ def fit_distribution(
 
 
 def select_best_distribution(
-    data: np.ndarray,
-    distributions: List[str],
-    selection_criteria: str = "aic"
+    data: np.ndarray, distributions: List[str], selection_criteria: str = "aic"
 ) -> Tuple[str, tuple]:
     """
     Select the best-fitting distribution based on specified criteria.
@@ -272,59 +273,37 @@ def select_best_distribution(
     for dist in distributions:
         params, gof_stats = fit_distribution(data, dist)
         if params is not None and "error" not in gof_stats:
-            results[dist] = {
-                'params': params,
-                'gof': gof_stats
-            }
+            results[dist] = {"params": params, "gof": gof_stats}
         else:
-            errors[dist] = (gof_stats.get(
-                "error", "Unknown error"
-            ) if gof_stats
-                            else "Failed to fit")
-        if not results:
-            error_msg = (
-                "No distributions could be successfully fitted. Errors: "
-                + str(errors)
-                )
-            raise ValueError(error_msg)
-        # or
-        if not results:
-            error_msg = (
-                "No distributions could be successfully fitted. Errors: "
-                f"{errors}"
+            errors[dist] = (
+                gof_stats.get("error", "Unknown error")
+                if gof_stats
+                else "Failed to fit"
             )
-            raise ValueError(error_msg)
+    if not results:
+        error_msg = (
+            "No distributions could be successfully fitted. Errors: " f"{errors}"
+        )
+        raise ValueError(error_msg)
     # Select best based on criteria
     try:
         if selection_criteria == "aic":
-            best_dist = min(
-                results.keys(), key=lambda x: results[x]['gof']['aic']
-                )
+            best_dist = min(results.keys(), key=lambda x: results[x]["gof"]["aic"])
         elif selection_criteria == "bic":
-            best_dist = min(
-                results.keys(), key=lambda x: results[x]['gof']['bic']
-                )
+            best_dist = min(results.keys(), key=lambda x: results[x]["gof"]["bic"])
         elif selection_criteria == "ks":
-            best_dist = min(
-                results.keys(), key=lambda x: results[x]['gof']['ks_stat']
-                )
+            best_dist = min(results.keys(), key=lambda x: results[x]["gof"]["ks_stat"])
         elif selection_criteria == "rmse":
-            best_dist = min(
-                results.keys(), key=lambda x: results[x]['gof']['rmse']
-                )
+            best_dist = min(results.keys(), key=lambda x: results[x]["gof"]["rmse"])
         else:
-            raise ValueError(
-                "Selection criteria must be 'aic', 'bic', 'ks', or 'rmse'"
-                )
+            raise ValueError("Selection criteria must be 'aic', 'bic', 'ks', or 'rmse'")
     except Exception as e:
         raise ValueError(f"Error in distribution selection: {str(e)}")
-    return best_dist, results[best_dist]['params']
+    return best_dist, results[best_dist]["params"]
 
 
 def calculate_return_period_values(
-    distribution: str,
-    params: tuple,
-    return_periods: List[int]
+    distribution: str, params: tuple, return_periods: List[int]
 ) -> Dict[str, float]:
     """
     Calculate return period values for a fitted distribution.
@@ -371,8 +350,7 @@ def calculate_return_period_values(
 
 
 def get_site_statistics_duckdb(
-    conn: duckdb.DuckDBPyConnection,
-    table_name: str
+    conn: duckdb.DuckDBPyConnection, table_name: str
 ) -> pd.DataFrame:
     """
     Get basic statistics for each site using DuckDB.
@@ -398,3 +376,18 @@ def get_site_statistics_duckdb(
     """
     return conn.execute(query).df()
 
+
+def envelope(items, has_more=False, next_cursor=None):
+    return {"items": items, "has_more": has_more, "next_cursor": next_cursor}
+
+
+def parse_cursor(cursor: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not cursor:
+        return None
+    try:
+        return json.loads(cursor)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail='`cursor` must be a JSON string, e.g. {"site":"ABC"}',
+        )
