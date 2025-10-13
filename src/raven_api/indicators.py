@@ -694,7 +694,7 @@ def weekly_flow_exceedance(
         WHERE value IS NOT NULL
         GROUP BY site, CAST(strftime('%W', date) AS INTEGER)
     )
-    SELECT site, week, p0.05, p10, p20, p30, p40, p50, p60, p70, p80, p90
+    SELECT site, week, p05, p10, p20, p30, p40, p50, p60, p70, p80, p90
     FROM weekly
     {ks}
     ORDER BY lower(site), site, week
@@ -907,4 +907,5 @@ def aggregate_flows(
     """
     df = CXN.execute(q).fetchdf()
     return df.rename(columns={"period": "time_period"})
+
 
