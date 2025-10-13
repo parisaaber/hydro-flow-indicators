@@ -680,20 +680,21 @@ def weekly_flow_exceedance(
         SELECT
             site,
             CAST(strftime('%W', date) AS INTEGER) AS week,
-            quantile_cont(value, 0.90) AS p10,
-            quantile_cont(value, 0.80) AS p20,
-            quantile_cont(value, 0.70) AS p30,
-            quantile_cont(value, 0.60) AS p40,
+            quantile_cont(value, 0.05) AS p05,
+            quantile_cont(value, 0.10) AS p10,
+            quantile_cont(value, 0.20) AS p20,
+            quantile_cont(value, 0.30) AS p30,
+            quantile_cont(value, 0.40) AS p40,
             quantile_cont(value, 0.50) AS p50,
-            quantile_cont(value, 0.40) AS p60,
-            quantile_cont(value, 0.30) AS p70,
-            quantile_cont(value, 0.20) AS p80,
-            quantile_cont(value, 0.05) AS p95
+            quantile_cont(value, 0.60) AS p60,
+            quantile_cont(value, 0.70) AS p70,
+            quantile_cont(value, 0.80) AS p80,
+            quantile_cont(value, 0.90) AS p90
         FROM filtered
         WHERE value IS NOT NULL
         GROUP BY site, CAST(strftime('%W', date) AS INTEGER)
     )
-    SELECT site, week, p10, p20, p30, p40, p50, p60, p70, p80, p95
+    SELECT site, week, p0.05, p10, p20, p30, p40, p50, p60, p70, p80, p90
     FROM weekly
     {ks}
     ORDER BY lower(site), site, week
@@ -906,3 +907,4 @@ def aggregate_flows(
     """
     df = CXN.execute(q).fetchdf()
     return df.rename(columns={"period": "time_period"})
+
