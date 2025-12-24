@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Query
 from raven_api.etl import init_etl
@@ -65,7 +65,7 @@ class IndicatorsBaseRequest(BaseModel):
     end_date: Optional[str] = Field(default=None, description="YYYY-MM-DD")
     # pagination
     limit: Optional[int] = Field(default=None, ge=1, le=10000)
-    cursor: Optional[Dict[str, str]] = Field(
+    cursor: Optional[Dict[str, Any]] = Field(
         default=None,
         description='Cursor object, e.g. {"site":"S"}.',
     )
@@ -541,7 +541,7 @@ class ListSitesRequest(BaseModel):
     limit: Optional[int] = Field(
         default=None, ge=1, le=10000, description="Max number of sites to return."
     )
-    cursor: Optional[Dict[str, str]] = Field(
+    cursor: Optional[Dict[str, Any]] = Field(
         default=None,
         description='Cursor object, e.g. {"site":"S"}.',
     )
