@@ -379,15 +379,3 @@ def get_site_statistics_duckdb(
 
 def envelope(items, has_more=False, next_cursor=None):
     return {"items": items, "has_more": has_more, "next_cursor": next_cursor}
-
-
-def parse_cursor(cursor: Optional[str]) -> Optional[Dict[str, Any]]:
-    if not cursor:
-        return None
-    try:
-        return json.loads(cursor)
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail='`cursor` must be a JSON string, e.g. {"site":"ABC"}',
-        )

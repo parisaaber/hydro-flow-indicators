@@ -16,7 +16,7 @@ from raven_api.indicators import (
     weekly_flow_exceedance,
     aggregate_flows,
     calculate_all_indicators,
-    CXN
+    CXN,
 )
 
 
@@ -101,15 +101,15 @@ class TestIndicatorsWithRealData(unittest.TestCase):
 
         CXN.reset()
         v3 = CXN.get_or_create_main_view(self.parquet_path)
-        self.assertEqual(v1, v3, "View name is deterministic per parquet path even after reset")
+        self.assertEqual(
+            v1, v3, "View name is deterministic per parquet path even after reset"
+        )
 
     # -------------------------
     # Indicators
     # -------------------------
     def test_mean_annual_flow(self):
-        df = mean_annual_flow(
-            self.parquet_path, temporal_resolution="overall"
-        )
+        df = mean_annual_flow(self.parquet_path, temporal_resolution="overall")
         self.assertFalse(df.empty)
         self.assertIn("mean_annual_flow", df.columns)
         self.assertIn("site", df.columns)
@@ -119,9 +119,7 @@ class TestIndicatorsWithRealData(unittest.TestCase):
         self.assertTrue(returned_sites.issubset(self.expected_sites))
 
         # Annual temporal resolution
-        df_annual = mean_annual_flow(
-            self.parquet_path, temporal_resolution="annual"
-        )
+        df_annual = mean_annual_flow(self.parquet_path, temporal_resolution="annual")
         self.assertIn("water_year", df_annual.columns)
         self.assertTrue(all(df_annual["mean_annual_flow"] > 0))
 
@@ -139,36 +137,26 @@ class TestIndicatorsWithRealData(unittest.TestCase):
                 )
 
     def test_mean_aug_sep_flow(self):
-        df = mean_aug_sep_flow(
-            self.parquet_path, temporal_resolution="overall"
-        )
+        df = mean_aug_sep_flow(self.parquet_path, temporal_resolution="overall")
         self.assertFalse(df.empty)
         self.assertIn("mean_aug_sep_flow", df.columns)
         self.assertTrue(all(df["mean_aug_sep_flow"] >= 0))
 
-        df_annual = mean_aug_sep_flow(
-            self.parquet_path, temporal_resolution="annual"
-        )
+        df_annual = mean_aug_sep_flow(self.parquet_path, temporal_resolution="annual")
         self.assertIn("water_year", df_annual.columns)
 
-        annual_df = mean_annual_flow(
-            self.parquet_path, temporal_resolution="overall"
-        )
+        annual_df = mean_annual_flow(self.parquet_path, temporal_resolution="overall")
         merged = df.merge(annual_df, on="site")
         lower_count = sum(merged["mean_aug_sep_flow"] < merged["mean_annual_flow"])
         self.assertGreater(lower_count, 0)
 
     def test_peak_flow_timing(self):
-        df = peak_flow_timing(
-            self.parquet_path, temporal_resolution="overall"
-        )
+        df = peak_flow_timing(self.parquet_path, temporal_resolution="overall")
         self.assertFalse(df.empty)
         self.assertIn("peak_flow_timing", df.columns)
         self.assertTrue(all(df["peak_flow_timing"] >= 1))
         self.assertTrue(all(df["peak_flow_timing"] <= 366))
-        df_annual = peak_flow_timing(
-            self.parquet_path, temporal_resolution="annual"
-        )
+        df_annual = peak_flow_timing(self.parquet_path, temporal_resolution="annual")
         self.assertIn("water_year", df_annual.columns)
         self.assertTrue(all(df_annual["water_year"].isin(self.expected_water_years)))
 
@@ -209,9 +197,7 @@ class TestIndicatorsWithRealData(unittest.TestCase):
         self.assertIn("mean_annual_peak", df.columns)
         self.assertTrue(all(df["mean_annual_peak"] > 0))
 
-        mean_df = mean_annual_flow(
-            self.parquet_path, temporal_resolution="overall"
-        )
+        mean_df = mean_annual_flow(self.parquet_path, temporal_resolution="overall")
         merged = df.merge(mean_df, on="site")
         higher_peaks = sum(merged["mean_annual_peak"] > merged["mean_annual_flow"])
         self.assertEqual(higher_peaks, len(merged))
@@ -224,9 +210,7 @@ class TestIndicatorsWithRealData(unittest.TestCase):
         self.assertTrue(all(df["annual_peak"] > 0))
         self.assertTrue(all(df["water_year"].isin(self.expected_water_years)))
 
-        df_overall = annual_peaks(
-            self.parquet_path, temporal_resolution="overall"
-        )
+        df_overall = annual_peaks(self.parquet_path, temporal_resolution="overall")
         self.assertIn("annual_peak", df_overall.columns)
         self.assertNotIn("water_year", df_overall.columns)
 
@@ -283,24 +267,20 @@ class TestIndicatorsWithRealData(unittest.TestCase):
     def test_weekly_flow_exceedance(self):
         df = weekly_flow_exceedance(self.parquet_path)
         self.assertFalse(df.empty)
-        for col in ["site", "week", "p10", "p50", "p95"]:
+        for col in ["site", "week", "p10", "p50", "p90"]:
             self.assertIn(col, df.columns)
         self.assertTrue(all(df["week"] >= 0))
         self.assertTrue(all(df["week"] <= 53))
-        self.assertTrue(all(df["p10"] >= df["p50"]))
-        self.assertTrue(all(df["p50"] >= df["p95"]))
+        self.assertTrue(all(df["p10"] <= df["p50"]))
+        self.assertTrue(all(df["p50"] <= df["p90"]))
 
     def test_aggregate_flows(self):
-        df_daily = aggregate_flows(
-            self.parquet_path, temporal_resolution="daily"
-        )
+        df_daily = aggregate_flows(self.parquet_path, temporal_resolution="daily")
         self.assertFalse(df_daily.empty)
         self.assertIn("time_period", df_daily.columns)
         self.assertIn("mean_flow", df_daily.columns)
 
-        df_monthly = aggregate_flows(
-            self.parquet_path, temporal_resolution="monthly"
-        )
+        df_monthly = aggregate_flows(self.parquet_path, temporal_resolution="monthly")
         self.assertFalse(df_monthly.empty)
 
         sites_daily = set(df_daily["site"])
@@ -308,9 +288,7 @@ class TestIndicatorsWithRealData(unittest.TestCase):
         self.assertEqual(sites_daily, sites_monthly)
         self.assertLess(len(df_monthly), len(df_daily))
 
-        df_seasonal = aggregate_flows(
-            self.parquet_path, temporal_resolution="seasonal"
-        )
+        df_seasonal = aggregate_flows(self.parquet_path, temporal_resolution="seasonal")
         self.assertFalse(df_seasonal.empty)
         seasonal_periods = df_seasonal["time_period"].unique()
         seasons = [
@@ -321,23 +299,17 @@ class TestIndicatorsWithRealData(unittest.TestCase):
             if season in expected_seasons:
                 self.assertIn(season, expected_seasons)
 
-        df_weekly = aggregate_flows(
-            self.parquet_path, temporal_resolution="weekly"
-        )
+        df_weekly = aggregate_flows(self.parquet_path, temporal_resolution="weekly")
         self.assertFalse(df_weekly.empty)
 
         with self.assertRaises(ValueError):
-            aggregate_flows(
-                self.parquet_path, temporal_resolution="invalid_resolution"
-            )
+            aggregate_flows(self.parquet_path, temporal_resolution="invalid_resolution")
 
     def test_edge_cases_and_error_handling(self):
         """Keep spirit of the old test: ensure errors surface for bad input."""
         # Invalid parquet path should raise
         with self.assertRaises(Exception):
-            mean_annual_flow(
-                "nonexistent.parquet", temporal_resolution="overall"
-            )
+            mean_annual_flow("nonexistent.parquet", temporal_resolution="overall")
 
         # Non-existent sites -> likely empty result
         df_empty = mean_annual_flow(
@@ -357,9 +329,7 @@ class TestIndicatorsWithRealData(unittest.TestCase):
         self.assertTrue(df_future.empty)
 
     def test_data_quality_validation(self):
-        df_maf = mean_annual_flow(
-            self.parquet_path, temporal_resolution="overall"
-        )
+        df_maf = mean_annual_flow(self.parquet_path, temporal_resolution="overall")
         mean_values = df_maf["mean_annual_flow"]
         q75, q25 = mean_values.quantile([0.75, 0.25])
         iqr = q75 - q25
@@ -374,12 +344,8 @@ class TestIndicatorsWithRealData(unittest.TestCase):
         self.assertGreater(cv, 0.1)
 
     def test_cross_validation_detailed(self):
-        df_annual = mean_annual_flow(
-            self.parquet_path, temporal_resolution="annual"
-        )
-        df_overall = mean_annual_flow(
-            self.parquet_path, temporal_resolution="overall"
-        )
+        df_annual = mean_annual_flow(self.parquet_path, temporal_resolution="annual")
+        df_overall = mean_annual_flow(self.parquet_path, temporal_resolution="overall")
 
         manual_overall = (
             df_annual.groupby("site")["mean_annual_flow"].mean().reset_index()
@@ -436,12 +402,8 @@ class TestIndicatorsWithRealData(unittest.TestCase):
         for func_name, col_name in functions_to_test:
             with self.subTest(function=func_name):
                 func = name_to_func[func_name]
-                df_overall = func(
-                    self.parquet_path, temporal_resolution="overall"
-                )
-                df_annual = func(
-                    self.parquet_path, temporal_resolution="annual"
-                )
+                df_overall = func(self.parquet_path, temporal_resolution="overall")
+                df_annual = func(self.parquet_path, temporal_resolution="annual")
                 self.assertFalse(
                     df_overall.empty, f"{func_name} overall should not be empty"
                 )
@@ -454,9 +416,7 @@ class TestIndicatorsWithRealData(unittest.TestCase):
                 self.assertIn(col_name, df_annual.columns)
 
     def test_calculate_all_indicators(self):
-        df = calculate_all_indicators(
-            self.parquet_path, EFN_threshold=0.2, debug=False
-        )
+        df = calculate_all_indicators(self.parquet_path, EFN_threshold=0.2, debug=False)
         self.assertFalse(df.empty)
         for col in [
             "site",
@@ -469,9 +429,7 @@ class TestIndicatorsWithRealData(unittest.TestCase):
             self.assertIn(col, df.columns)
 
     def test_data_consistency_across_functions(self):
-        peaks_direct = annual_peaks(
-            self.parquet_path, temporal_resolution="annual"
-        )
+        peaks_direct = annual_peaks(self.parquet_path, temporal_resolution="annual")
         peaks_from_flow = peak_flows(self.parquet_path)
 
         manual_mean_peaks = (
@@ -494,9 +452,7 @@ class TestIndicatorsWithRealData(unittest.TestCase):
             start_date=start_date,
             end_date=end_date,
         )
-        df_full = mean_annual_flow(
-            self.parquet_path, temporal_resolution="overall"
-        )
+        df_full = mean_annual_flow(self.parquet_path, temporal_resolution="overall")
 
         self.assertFalse(df_filtered.empty)
         common_sites = set(df_filtered["site"]) & set(df_full["site"])
