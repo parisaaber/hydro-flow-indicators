@@ -541,7 +541,7 @@ class ListSitesRequest(BaseModel):
     limit: Optional[int] = Field(
         default=None, ge=1, le=10000, description="Max number of sites to return."
     )
-    cursor: Optional[Dict[str, SystemError]] = Field(
+    cursor: Optional[Dict[str, str]] = Field(
         default=None,
         description='Cursor object, e.g. {"site":"S"}.',
     )
