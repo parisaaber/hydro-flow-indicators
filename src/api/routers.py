@@ -1,5 +1,5 @@
-from typing import List, Optional
-from pydantic import BaseModel, Field, Dict
+from typing import List, Optional, Dict
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Query
 from raven_api.etl import init_etl
 from raven_api.indicators import (
