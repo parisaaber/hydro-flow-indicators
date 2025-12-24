@@ -13,7 +13,7 @@ This FastAPI-based application provides a web service for computing a suite of h
   - Days below Environmental Flow Needs (EFN) threshold (overall or annual)
   - Annual peak flows
   - Mean annual peak flow
-  - Weekly flow exceedance thresholds (P05, P10, ..., P95)
+  - Weekly flow exceedance thresholds (P05, P10, ..., P90)
   - **Enhanced Flood Frequency Analysis (FFA)** with multiple distributions (Gumbel, Log-Pearson III, Gamma, etc.), automatic best-fit selection, and outlier detection.
 - **Temporal Aggregation**: Retrieve daily, weekly, monthly, or seasonal hydrographs.
 - **Sub-period Analysis**: Compare indicators before and after a specified break point year.
@@ -115,7 +115,7 @@ All indicator endpoints accept these common query parameters for filtering:
 | **`GET /api/indicators/days_below_efn`**           | Number of days below the Environmental Flow Needs threshold.           | `efn_threshold`, `temporal_resolution` (`overall` or `annual`)                                                        |
 | **`GET /api/indicators/annual_peaks`**             | Annual peak flows for each water year.                                 | -                                                                                                                     |
 | **`GET /api/indicators/peak_flows`**               | Mean annual peak flow.                                                 | -                                                                                                                     |
-| **`GET /api/indicators/weekly_flow_exceedance`**   | Weekly flow exceedance probabilities (P05 to P95).                     | -                                                                                                                     |
+| **`GET /api/indicators/weekly_flow_exceedance`**   | Weekly flow exceedance probabilities (P05 to P90).                     | -                                                                                                                     |
 | **`GET /api/indicators/flood_frequency_analysis`** | **Enhanced FFA** with configurable distributions and outlier handling. | `return_periods`, `dist`, `remove_outliers`, `outlier_method`, `outlier_threshold`, `min_years`, `selection_criteria` |
 | **`GET /api/indicators/aggregate_flows`**          | Get a hydrograph aggregated to a specified time resolution.            | `temporal_resolution` (`daily`, `weekly`, `monthly`, `seasonal`)                                                      |
 
